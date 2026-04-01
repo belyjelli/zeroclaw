@@ -125,6 +125,7 @@ Last refreshed: **February 18, 2026**.
 ### 6) Contribution & CI
 
 - [contributing/README.md](contributing/README.md)
+- [claude-code-style-integration-roadmap.md](contributing/claude-code-style-integration-roadmap.md)
 - [../CONTRIBUTING.md](../CONTRIBUTING.md)
 - [pr-workflow.md](contributing/pr-workflow.md)
 - [reviewer-playbook.md](contributing/reviewer-playbook.md)

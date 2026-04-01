@@ -2,6 +2,10 @@
 
 适用于贡献者、评审者和维护者。
 
+## 路线图 / 提案
+
+- Claude Code 风格智能体集成（动态上下文、子智能体、MCP 服务端、会话）：[./claude-code-style-integration-roadmap.zh-CN.md](./claude-code-style-integration-roadmap.zh-CN.md)
+
 ## 核心政策
 
 - 贡献指南：[../../../../CONTRIBUTING.md](../../../../CONTRIBUTING.md)

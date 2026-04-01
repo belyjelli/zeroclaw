@@ -2,6 +2,10 @@
 
 Dành cho contributor, reviewer và maintainer.
 
+## Lộ trình / Đề xuất
+
+- Tích hợp agent kiểu Claude Code (ngữ cảnh động, sub-agent, MCP server, phiên): [../claude-code-style-integration-roadmap.md](../claude-code-style-integration-roadmap.md)
+
 ## Chính sách cốt lõi
 
 - Hướng dẫn đóng góp: [../../../CONTRIBUTING.md](../../../CONTRIBUTING.md)

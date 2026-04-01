@@ -2336,6 +2336,7 @@ pub(crate) async fn agent_turn(
         activated_tools,
         model_switch_callback,
         &crate::config::PacingConfig::default(),
+        &crate::config::ToolResultOffloadConfig::default(),
     )
     .await
 }
@@ -2646,6 +2647,7 @@ pub(crate) async fn run_tool_call_loop(
     activated_tools: Option<&std::sync::Arc<std::sync::Mutex<crate::tools::ActivatedToolSet>>>,
     model_switch_callback: Option<ModelSwitchCallback>,
     pacing: &crate::config::PacingConfig,
+    tool_result_offload: &crate::config::ToolResultOffloadConfig,
 ) -> Result<String> {
     let max_iterations = if max_tool_iterations == 0 {
         DEFAULT_MAX_TOOL_ITERATIONS
@@ -3076,6 +3078,12 @@ pub(crate) async fn run_tool_call_loop(
                 }
             }
             history.push(ChatMessage::assistant(response_text.clone()));
+            crate::agent::session_transcript::record_assistant_from_task_local(
+                &display_text,
+                channel_name,
+                provider_name,
+                model,
+            );
             return Ok(display_text);
         }
 
@@ -3320,11 +3328,16 @@ pub(crate) async fn run_tool_call_loop(
             .await?
         };
 
-        for ((idx, call), outcome) in executable_indices
+        for ((idx, call), mut outcome) in executable_indices
             .iter()
             .zip(executable_calls.iter())
             .zip(executed_outcomes.into_iter())
         {
+            outcome.output = crate::agent::tool_result_offload::maybe_offload_output(
+                &outcome.output,
+                &call.name,
+                tool_result_offload,
+            );
             runtime_trace::record_event(
                 "tool_call_result",
                 Some(channel_name),
@@ -3932,6 +3945,12 @@ pub async fn run(
         None
     };
     let native_tools = provider.supports_native_tools();
+    let user_zeroclaw = crate::context::default_user_zeroclaw_dir();
+    let dynamic_paths = crate::context::DynamicContextPaths {
+        global_config_dir: None,
+        user_config_dir: user_zeroclaw.as_deref(),
+        session_dir: None,
+    };
     let mut system_prompt = crate::channels::build_system_prompt_with_mode_and_autonomy(
         &config.workspace_dir,
         &model_name,
@@ -3944,6 +3963,8 @@ pub async fn run(
         config.skills.prompt_injection_mode,
         config.agent.compact_context,
         config.agent.max_system_prompt_chars,
+        Some(&config.agent.dynamic_context),
+        dynamic_paths,
     );
 
     // Append structured tool-use instructions with schemas (only for non-native providers)
@@ -4062,30 +4083,40 @@ pub async fn run(
         #[allow(unused_assignments)]
         let mut response = String::new();
         loop {
-            match run_tool_call_loop(
-                provider.as_ref(),
-                &mut history,
-                &tools_registry,
-                observer.as_ref(),
-                &provider_name,
-                &model_name,
-                effective_temperature,
-                false,
-                approval_manager.as_ref(),
-                channel_name,
-                None,
-                &config.multimodal,
-                config.agent.max_tool_iterations,
-                None,
-                None,
-                None,
-                &excluded_tools,
-                &config.agent.tool_call_dedup_exempt,
-                activated_handle.as_ref(),
-                Some(model_switch_callback.clone()),
-                &config.pacing,
-            )
-            .await
+            match crate::agent::session_transcript::SESSION_TRANSCRIPT_CONTEXT
+                .scope(
+                    Some(crate::agent::session_transcript::SessionTranscriptScope {
+                        cfg: config.agent.session_transcript.clone(),
+                        session_key: memory_session_id
+                            .clone()
+                            .unwrap_or_else(|| format!("{channel_name}:nosession")),
+                    }),
+                    run_tool_call_loop(
+                        provider.as_ref(),
+                        &mut history,
+                        &tools_registry,
+                        observer.as_ref(),
+                        &provider_name,
+                        &model_name,
+                        effective_temperature,
+                        false,
+                        approval_manager.as_ref(),
+                        channel_name,
+                        None,
+                        &config.multimodal,
+                        config.agent.max_tool_iterations,
+                        None,
+                        None,
+                        None,
+                        &excluded_tools,
+                        &config.agent.tool_call_dedup_exempt,
+                        activated_handle.as_ref(),
+                        Some(model_switch_callback.clone()),
+                        &config.pacing,
+                        &config.agent.tool_result_offload,
+                    ),
+                )
+                .await
             {
                 Ok(resp) => {
                     response = resp;
@@ -4322,30 +4353,40 @@ pub async fn run(
             );
 
             let response = loop {
-                match run_tool_call_loop(
-                    provider.as_ref(),
-                    &mut history,
-                    &tools_registry,
-                    observer.as_ref(),
-                    &provider_name,
-                    &model_name,
-                    turn_temperature,
-                    false,
-                    approval_manager.as_ref(),
-                    channel_name,
-                    None,
-                    &config.multimodal,
-                    config.agent.max_tool_iterations,
-                    None,
-                    None,
-                    None,
-                    &excluded_tools,
-                    &config.agent.tool_call_dedup_exempt,
-                    activated_handle.as_ref(),
-                    Some(model_switch_callback.clone()),
-                    &config.pacing,
-                )
-                .await
+                match crate::agent::session_transcript::SESSION_TRANSCRIPT_CONTEXT
+                    .scope(
+                        Some(crate::agent::session_transcript::SessionTranscriptScope {
+                            cfg: config.agent.session_transcript.clone(),
+                            session_key: memory_session_id
+                                .clone()
+                                .unwrap_or_else(|| format!("{channel_name}:nosession")),
+                        }),
+                        run_tool_call_loop(
+                            provider.as_ref(),
+                            &mut history,
+                            &tools_registry,
+                            observer.as_ref(),
+                            &provider_name,
+                            &model_name,
+                            turn_temperature,
+                            false,
+                            approval_manager.as_ref(),
+                            channel_name,
+                            None,
+                            &config.multimodal,
+                            config.agent.max_tool_iterations,
+                            None,
+                            None,
+                            None,
+                            &excluded_tools,
+                            &config.agent.tool_call_dedup_exempt,
+                            activated_handle.as_ref(),
+                            Some(model_switch_callback.clone()),
+                            &config.pacing,
+                            &config.agent.tool_result_offload,
+                        ),
+                    )
+                    .await
                 {
                     Ok(resp) => break resp,
                     Err(e) => {
@@ -4684,6 +4725,12 @@ pub async fn process_message(
         None
     };
     let native_tools = provider.supports_native_tools();
+    let user_zeroclaw = crate::context::default_user_zeroclaw_dir();
+    let dynamic_paths = crate::context::DynamicContextPaths {
+        global_config_dir: None,
+        user_config_dir: user_zeroclaw.as_deref(),
+        session_dir: None,
+    };
     let mut system_prompt = crate::channels::build_system_prompt_with_mode_and_autonomy(
         &config.workspace_dir,
         &model_name,
@@ -4696,6 +4743,8 @@ pub async fn process_message(
         config.skills.prompt_injection_mode,
         config.agent.compact_context,
         config.agent.max_system_prompt_chars,
+        Some(&config.agent.dynamic_context),
+        dynamic_paths,
     );
     if !native_tools {
         system_prompt.push_str(&build_tool_instructions(&tools_registry, Some(&i18n_descs)));
@@ -4763,26 +4812,36 @@ pub async fn process_message(
         excluded_tools.extend(config.autonomy.non_cli_excluded_tools.iter().cloned());
     }
 
-    agent_turn(
-        provider.as_ref(),
-        &mut history,
-        &tools_registry,
-        observer.as_ref(),
-        provider_name,
-        &model_name,
-        effective_temperature,
-        true,
-        "daemon",
-        None,
-        &config.multimodal,
-        config.agent.max_tool_iterations,
-        Some(&approval_manager),
-        &excluded_tools,
-        &config.agent.tool_call_dedup_exempt,
-        activated_handle_pm.as_ref(),
-        None,
-    )
-    .await
+    let transcript_key = session_id
+        .map(String::from)
+        .unwrap_or_else(|| "daemon:none".to_string());
+    crate::agent::session_transcript::SESSION_TRANSCRIPT_CONTEXT
+        .scope(
+            Some(crate::agent::session_transcript::SessionTranscriptScope {
+                cfg: config.agent.session_transcript.clone(),
+                session_key: transcript_key,
+            }),
+            agent_turn(
+                provider.as_ref(),
+                &mut history,
+                &tools_registry,
+                observer.as_ref(),
+                provider_name,
+                &model_name,
+                effective_temperature,
+                true,
+                "daemon",
+                None,
+                &config.multimodal,
+                config.agent.max_tool_iterations,
+                Some(&approval_manager),
+                &excluded_tools,
+                &config.agent.tool_call_dedup_exempt,
+                activated_handle_pm.as_ref(),
+                None,
+            ),
+        )
+        .await
 }
 
 #[cfg(test)]
@@ -5292,6 +5351,7 @@ mod tests {
             None,
             None,
             &crate::config::PacingConfig::default(),
+            &crate::config::ToolResultOffloadConfig::default(),
         )
         .await
         .expect_err("provider without vision support should fail");
@@ -5344,6 +5404,7 @@ mod tests {
             None,
             None,
             &crate::config::PacingConfig::default(),
+            &crate::config::ToolResultOffloadConfig::default(),
         )
         .await
         .expect_err("oversized payload must fail");
@@ -5389,6 +5450,7 @@ mod tests {
             None,
             None,
             &crate::config::PacingConfig::default(),
+            &crate::config::ToolResultOffloadConfig::default(),
         )
         .await
         .expect("valid multimodal payload should pass");
@@ -5434,6 +5496,7 @@ mod tests {
             None,
             None,
             &crate::config::PacingConfig::default(),
+            &crate::config::ToolResultOffloadConfig::default(),
         )
         .await
         .expect_err("should fail without vision_provider config");
@@ -5486,6 +5549,7 @@ mod tests {
             None,
             None,
             &crate::config::PacingConfig::default(),
+            &crate::config::ToolResultOffloadConfig::default(),
         )
         .await
         .expect_err("should fail when vision provider cannot be created");
@@ -5538,6 +5602,7 @@ mod tests {
             None,
             None,
             &crate::config::PacingConfig::default(),
+            &crate::config::ToolResultOffloadConfig::default(),
         )
         .await
         .expect("text-only messages should succeed with default provider");
@@ -5591,6 +5656,7 @@ mod tests {
             None,
             None,
             &crate::config::PacingConfig::default(),
+            &crate::config::ToolResultOffloadConfig::default(),
         )
         .await
         .expect_err("should fail due to nonexistent vision provider");
@@ -5642,6 +5708,7 @@ mod tests {
             None,
             None,
             &crate::config::PacingConfig::default(),
+            &crate::config::ToolResultOffloadConfig::default(),
         )
         .await
         .expect("empty image markers should not trigger vision routing");
@@ -5693,6 +5760,7 @@ mod tests {
             None,
             None,
             &crate::config::PacingConfig::default(),
+            &crate::config::ToolResultOffloadConfig::default(),
         )
         .await
         .expect_err("should attempt vision provider creation for multiple images");
@@ -5827,6 +5895,7 @@ mod tests {
             None,
             None,
             &crate::config::PacingConfig::default(),
+            &crate::config::ToolResultOffloadConfig::default(),
         )
         .await
         .expect("parallel execution should complete");
@@ -5898,6 +5967,7 @@ mod tests {
             None,
             None,
             &crate::config::PacingConfig::default(),
+            &crate::config::ToolResultOffloadConfig::default(),
         )
         .await
         .expect("cron_add delivery defaults should be injected");
@@ -5961,6 +6031,7 @@ mod tests {
             None,
             None,
             &crate::config::PacingConfig::default(),
+            &crate::config::ToolResultOffloadConfig::default(),
         )
         .await
         .expect("explicit delivery mode should be preserved");
@@ -6019,6 +6090,7 @@ mod tests {
             None,
             None,
             &crate::config::PacingConfig::default(),
+            &crate::config::ToolResultOffloadConfig::default(),
         )
         .await
         .expect("loop should finish after deduplicating repeated calls");
@@ -6089,6 +6161,7 @@ mod tests {
             None,
             None,
             &crate::config::PacingConfig::default(),
+            &crate::config::ToolResultOffloadConfig::default(),
         )
         .await
         .expect("non-interactive shell should succeed for low-risk command");
@@ -6150,6 +6223,7 @@ mod tests {
             None,
             None,
             &crate::config::PacingConfig::default(),
+            &crate::config::ToolResultOffloadConfig::default(),
         )
         .await
         .expect("loop should finish with exempt tool executing twice");
@@ -6231,6 +6305,7 @@ mod tests {
             None,
             None,
             &crate::config::PacingConfig::default(),
+            &crate::config::ToolResultOffloadConfig::default(),
         )
         .await
         .expect("loop should complete");
@@ -6289,6 +6364,7 @@ mod tests {
             None,
             None,
             &crate::config::PacingConfig::default(),
+            &crate::config::ToolResultOffloadConfig::default(),
         )
         .await
         .expect("native fallback id flow should complete");
@@ -6371,6 +6447,7 @@ mod tests {
             None,
             None,
             &crate::config::PacingConfig::default(),
+            &crate::config::ToolResultOffloadConfig::default(),
         )
         .await
         .expect("native tool-call text should be relayed through on_delta");
@@ -8361,6 +8438,7 @@ Let me check the result."#;
             None,
             None,
             &crate::config::PacingConfig::default(),
+            &crate::config::ToolResultOffloadConfig::default(),
         )
         .await
         .expect("tool loop should complete");
@@ -8509,6 +8587,7 @@ Let me check the result."#;
                     None,
                     None,
                     &crate::config::PacingConfig::default(),
+                    &crate::config::ToolResultOffloadConfig::default(),
                 ),
             )
             .await
@@ -8588,6 +8667,7 @@ Let me check the result."#;
                     None,
                     None,
                     &crate::config::PacingConfig::default(),
+                    &crate::config::ToolResultOffloadConfig::default(),
                 ),
             )
             .await
@@ -8643,6 +8723,7 @@ Let me check the result."#;
             None,
             None,
             &crate::config::PacingConfig::default(),
+            &crate::config::ToolResultOffloadConfig::default(),
         )
         .await
         .expect("should succeed without cost scope");

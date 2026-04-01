@@ -45,6 +45,8 @@ pub struct Agent {
     tool_dispatcher: Box<dyn ToolDispatcher>,
     memory_loader: Box<dyn MemoryLoader>,
     config: crate::config::AgentConfig,
+    /// Default provider id from config (for transcripts / diagnostics).
+    provider_label: String,
     model_name: String,
     temperature: f64,
     workspace_dir: std::path::PathBuf,
@@ -76,6 +78,7 @@ pub struct AgentBuilder {
     tool_dispatcher: Option<Box<dyn ToolDispatcher>>,
     memory_loader: Option<Box<dyn MemoryLoader>>,
     config: Option<crate::config::AgentConfig>,
+    provider_label: Option<String>,
     model_name: Option<String>,
     temperature: Option<f64>,
     workspace_dir: Option<std::path::PathBuf>,
@@ -105,6 +108,7 @@ impl AgentBuilder {
             tool_dispatcher: None,
             memory_loader: None,
             config: None,
+            provider_label: None,
             model_name: None,
             temperature: None,
             workspace_dir: None,
@@ -161,6 +165,11 @@ impl AgentBuilder {
 
     pub fn config(mut self, config: crate::config::AgentConfig) -> Self {
         self.config = Some(config);
+        self
+    }
+
+    pub fn provider_label(mut self, provider_label: String) -> Self {
+        self.provider_label = Some(provider_label);
         self
     }
 
@@ -285,6 +294,9 @@ impl AgentBuilder {
                 .memory_loader
                 .unwrap_or_else(|| Box::new(DefaultMemoryLoader::default())),
             config: self.config.unwrap_or_default(),
+            provider_label: self
+                .provider_label
+                .unwrap_or_else(|| "openrouter".to_string()),
             model_name: self
                 .model_name
                 .unwrap_or_else(|| "anthropic/claude-sonnet-4-20250514".into()),
@@ -327,6 +339,17 @@ impl Agent {
 
     pub fn set_memory_session_id(&mut self, session_id: Option<String>) {
         self.memory_session_id = session_id;
+    }
+
+    fn append_session_transcript(&self, channel: &str, model: &str, text: &str) {
+        crate::agent::session_transcript::append_assistant_for_config(
+            &self.config.session_transcript,
+            self.memory_session_id.as_deref().unwrap_or(""),
+            channel,
+            &self.provider_label,
+            model,
+            text,
+        );
     }
 
     /// Hydrate the agent with prior chat messages (e.g. from a session backend).
@@ -516,6 +539,7 @@ impl Agent {
             )))
             .prompt_builder(SystemPromptBuilder::with_defaults())
             .config(config.agent.clone())
+            .provider_label(provider_name.to_string())
             .model_name(model_name)
             .temperature(config.default_temperature)
             .workspace_dir(config.workspace_dir.clone())
@@ -575,7 +599,28 @@ impl Agent {
             security_summary: self.security_summary.clone(),
             autonomy_level: self.autonomy_level,
         };
-        self.prompt_builder.build(&ctx)
+        let mut out = self.prompt_builder.build(&ctx)?;
+        if self.config.dynamic_context.enabled {
+            let user_zeroclaw = crate::context::default_user_zeroclaw_dir();
+            let paths = crate::context::DynamicContextPaths {
+                global_config_dir: None,
+                user_config_dir: user_zeroclaw.as_deref(),
+                session_dir: None,
+            };
+            match crate::context::format_dynamic_context_block(
+                &self.config.dynamic_context,
+                &self.workspace_dir,
+                paths,
+            ) {
+                Ok(block) if !block.trim().is_empty() => {
+                    out.push_str("\n\n");
+                    out.push_str(&block);
+                }
+                Err(e) => tracing::debug!(error = %e, "dynamic context assembly skipped"),
+                _ => {}
+            }
+        }
+        Ok(out)
     }
 
     async fn execute_tool_call(&self, call: &ParsedToolCall) -> ToolExecutionResult {
@@ -607,6 +652,12 @@ impl Agent {
         } else {
             format!("Unknown tool: {}", call.name)
         };
+
+        let result = crate::agent::tool_result_offload::maybe_offload_output(
+            &result,
+            &call.name,
+            &self.config.tool_result_offload,
+        );
 
         ToolExecutionResult {
             name: call.name.clone(),
@@ -759,6 +810,7 @@ impl Agent {
                             cached.clone(),
                         )));
                     self.trim_history();
+                    self.append_session_transcript("gateway", &effective_model, &cached);
                     return Ok(cached);
                 }
                 self.observer.record_event(&ObserverEvent::CacheMiss {
@@ -811,6 +863,7 @@ impl Agent {
                     )));
                 self.trim_history();
 
+                self.append_session_transcript("gateway", &effective_model, &final_text);
                 return Ok(final_text);
             }
 
@@ -934,6 +987,7 @@ impl Agent {
                             cached.clone(),
                         )));
                     self.trim_history();
+                    self.append_session_transcript("gateway", &effective_model, &cached);
                     return Ok(cached);
                 }
                 self.observer.record_event(&ObserverEvent::CacheMiss {
@@ -1039,6 +1093,7 @@ impl Agent {
                     )));
                 self.trim_history();
 
+                self.append_session_transcript("gateway", &effective_model, &final_text);
                 return Ok(final_text);
             }
 

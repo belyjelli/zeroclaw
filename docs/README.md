@@ -68,6 +68,7 @@ Localized hubs:
 - [reviewer-playbook.md](contributing/reviewer-playbook.md)
 - [ci-map.md](contributing/ci-map.md)
 - [actions-source-policy.md](contributing/actions-source-policy.md)
+- [claude-code-style-integration-roadmap.md](contributing/claude-code-style-integration-roadmap.md) — Claude Code–style agent capabilities (proposal)
 
 ### Security / Reliability
 

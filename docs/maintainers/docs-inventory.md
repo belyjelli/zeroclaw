@@ -86,6 +86,7 @@ These are valuable context, but **not strict runtime contracts**.
 | `docs/agnostic-security.md` | Proposal |
 | `docs/frictionless-security.md` | Proposal |
 | `docs/security-roadmap.md` | Roadmap |
+| `docs/contributing/claude-code-style-integration-roadmap.md` | Roadmap |
 
 ## Snapshot Docs
 

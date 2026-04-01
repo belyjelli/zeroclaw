@@ -68,6 +68,7 @@ Hub bản địa hóa: [简体中文](README.zh-CN.md) · [日本語](README.ja.
 - [reviewer-playbook.md](i18n/vi/reviewer-playbook.md)
 - [ci-map.md](i18n/vi/ci-map.md)
 - [actions-source-policy.md](i18n/vi/actions-source-policy.md)
+- [claude-code-style-integration-roadmap.md](vi/claude-code-style-integration-roadmap.md) — khả năng agent kiểu Claude Code (đề xuất)
 
 ### Bảo mật / Độ tin cậy
 

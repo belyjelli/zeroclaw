@@ -9,7 +9,9 @@ pub mod loop_;
 pub mod loop_detector;
 pub mod memory_loader;
 pub mod prompt;
+pub mod session_transcript;
 pub mod thinking;
+pub mod tool_result_offload;
 
 #[cfg(test)]
 mod tests;

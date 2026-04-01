@@ -2,6 +2,10 @@
 
 For contributors, reviewers, and maintainers.
 
+## Roadmaps / Proposals
+
+- Claude Code–style agent integration (dynamic context, sub-agents, MCP server, sessions): [./claude-code-style-integration-roadmap.md](./claude-code-style-integration-roadmap.md)
+
 ## Core Policies
 
 - Contribution guide: [../../CONTRIBUTING.md](../../CONTRIBUTING.md)

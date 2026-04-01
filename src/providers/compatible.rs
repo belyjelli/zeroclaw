@@ -1278,7 +1278,11 @@ impl Provider for OpenAiCompatibleProvider {
             };
             messages.push(Message {
                 role: "user".to_string(),
-                content: Self::to_message_content("user", &content, self.user_image_parts_enabled()),
+                content: Self::to_message_content(
+                    "user",
+                    &content,
+                    self.user_image_parts_enabled(),
+                ),
             });
         } else {
             if let Some(sys) = system_prompt {

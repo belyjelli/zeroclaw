@@ -1274,6 +1274,77 @@ fn default_local_whisper_timeout_secs() -> u64 {
     300
 }
 
+fn default_dynamic_context_include_git() -> bool {
+    true
+}
+
+fn default_dynamic_context_max_git_log() -> usize {
+    5
+}
+
+/// Git snapshot and layered instruction fingerprinting for system prompts (`[agent.dynamic_context]`).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DynamicContextConfig {
+    /// When true, append a live git snapshot (branch, porcelain, recent commits) to the system prompt.
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_dynamic_context_include_git")]
+    pub include_git: bool,
+    #[serde(default = "default_dynamic_context_max_git_log")]
+    pub max_git_log_lines: usize,
+}
+
+impl Default for DynamicContextConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            include_git: default_dynamic_context_include_git(),
+            max_git_log_lines: default_dynamic_context_max_git_log(),
+        }
+    }
+}
+
+fn default_tool_result_offload_threshold_chars() -> usize {
+    10_000
+}
+
+fn default_tool_result_offload_preview_chars() -> usize {
+    4_000
+}
+
+/// Large tool outputs are written to disk and replaced with a preview + path (`[agent.tool_result_offload]`).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ToolResultOffloadConfig {
+    /// When true, outputs longer than `threshold_chars` (Unicode scalar values) are offloaded.
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_tool_result_offload_threshold_chars")]
+    pub threshold_chars: usize,
+    #[serde(default = "default_tool_result_offload_preview_chars")]
+    pub preview_chars: usize,
+}
+
+impl Default for ToolResultOffloadConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            threshold_chars: default_tool_result_offload_threshold_chars(),
+            preview_chars: default_tool_result_offload_preview_chars(),
+        }
+    }
+}
+
+/// Append assistant finals to `~/.zeroclaw/sessions/transcripts/*.jsonl` (`[agent.session_transcript]`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct SessionTranscriptConfig {
+    /// When true, each completed assistant reply is appended as one JSON line per session key.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Maximum Unicode characters stored per line (`0` = unlimited).
+    #[serde(default)]
+    pub max_content_chars: usize,
+}
+
 /// Agent orchestration configuration (`[agent]` section).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AgentConfig {
@@ -1334,6 +1405,18 @@ pub struct AgentConfig {
     /// Automatic complexity-based classification fallback.
     #[serde(default)]
     pub auto_classify: Option<crate::agent::eval::AutoClassifyConfig>,
+
+    /// Dynamic workspace/git snapshot (Claude Code–style integration roadmap).
+    #[serde(default)]
+    pub dynamic_context: DynamicContextConfig,
+
+    /// Offload oversized tool outputs to `~/.zeroclaw/temp/tool-results/` (Phase 2 roadmap).
+    #[serde(default)]
+    pub tool_result_offload: ToolResultOffloadConfig,
+
+    /// Optional JSONL transcript of assistant replies (Phase 5 roadmap).
+    #[serde(default)]
+    pub session_transcript: SessionTranscriptConfig,
 }
 
 fn default_agent_max_tool_iterations() -> usize {
@@ -1373,6 +1456,9 @@ impl Default for AgentConfig {
             context_aware_tools: false,
             eval: crate::agent::eval::EvalConfig::default(),
             auto_classify: None,
+            dynamic_context: DynamicContextConfig::default(),
+            tool_result_offload: ToolResultOffloadConfig::default(),
+            session_transcript: SessionTranscriptConfig::default(),
         }
     }
 }
@@ -11339,6 +11425,9 @@ reasoning_effort = "turbo"
         assert_eq!(cfg.max_history_messages, 50);
         assert!(!cfg.parallel_tools);
         assert_eq!(cfg.tool_dispatcher, "auto");
+        assert!(!cfg.dynamic_context.enabled);
+        assert!(!cfg.tool_result_offload.enabled);
+        assert!(!cfg.session_transcript.enabled);
     }
 
     #[test]

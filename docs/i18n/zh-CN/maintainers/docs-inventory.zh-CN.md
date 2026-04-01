@@ -86,6 +86,7 @@
 | `docs/agnostic-security.md` | 提案 |
 | `docs/frictionless-security.md` | 提案 |
 | `docs/security-roadmap.md` | 路线图 |
+| `docs/contributing/claude-code-style-integration-roadmap.md` | 路线图 |
 
 ## 快照文档
 

@@ -2701,37 +2701,44 @@ async fn process_channel_message(
             () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
             result = tokio::time::timeout(
                 Duration::from_secs(timeout_budget_secs),
-                crate::agent::loop_::TOOL_LOOP_COST_TRACKING_CONTEXT.scope(
-                    cost_tracking_context.clone(),
-                run_tool_call_loop(
-                    active_provider.as_ref(),
-                    &mut history,
-                    ctx.tools_registry.as_ref(),
-                    notify_observer.as_ref() as &dyn Observer,
-                    route.provider.as_str(),
-                    route.model.as_str(),
-                    runtime_defaults.temperature,
-                    true,
-                    Some(&*ctx.approval_manager),
-                    msg.channel.as_str(),
-                    Some(msg.reply_target.as_str()),
-                    &ctx.multimodal,
-                    ctx.max_tool_iterations,
-                    Some(cancellation_token.clone()),
-                    delta_tx.clone(),
-                    ctx.hooks.as_deref(),
-                    if msg.channel == "cli"
-                        || ctx.autonomy_level == AutonomyLevel::Full
-                    {
-                        &[]
-                    } else {
-                        ctx.non_cli_excluded_tools.as_ref()
-                    },
-                    ctx.tool_call_dedup_exempt.as_ref(),
-                    ctx.activated_tools.as_ref(),
-                    Some(model_switch_callback.clone()),
-                    &ctx.pacing,
-                ),
+                crate::agent::session_transcript::SESSION_TRANSCRIPT_CONTEXT.scope(
+                    Some(crate::agent::session_transcript::SessionTranscriptScope {
+                        cfg: ctx.prompt_config.agent.session_transcript.clone(),
+                        session_key: conversation_history_key(&msg),
+                    }),
+                    crate::agent::loop_::TOOL_LOOP_COST_TRACKING_CONTEXT.scope(
+                        cost_tracking_context.clone(),
+                        run_tool_call_loop(
+                            active_provider.as_ref(),
+                            &mut history,
+                            ctx.tools_registry.as_ref(),
+                            notify_observer.as_ref() as &dyn Observer,
+                            route.provider.as_str(),
+                            route.model.as_str(),
+                            runtime_defaults.temperature,
+                            true,
+                            Some(&*ctx.approval_manager),
+                            msg.channel.as_str(),
+                            Some(msg.reply_target.as_str()),
+                            &ctx.multimodal,
+                            ctx.max_tool_iterations,
+                            Some(cancellation_token.clone()),
+                            delta_tx.clone(),
+                            ctx.hooks.as_deref(),
+                            if msg.channel == "cli"
+                                || ctx.autonomy_level == AutonomyLevel::Full
+                            {
+                                &[]
+                            } else {
+                                ctx.non_cli_excluded_tools.as_ref()
+                            },
+                            ctx.tool_call_dedup_exempt.as_ref(),
+                            ctx.activated_tools.as_ref(),
+                            Some(model_switch_callback.clone()),
+                            &ctx.pacing,
+                            &ctx.prompt_config.agent.tool_result_offload,
+                        ),
+                    ),
                 ),
             ) => LlmExecutionResult::Completed(result),
         };
@@ -3398,6 +3405,8 @@ pub fn build_system_prompt_with_mode(
         skills_prompt_mode,
         false,
         0,
+        None,
+        crate::context::DynamicContextPaths::default(),
     )
 }
 
@@ -3414,6 +3423,8 @@ pub fn build_system_prompt_with_mode_and_autonomy(
     skills_prompt_mode: crate::config::SkillsPromptInjectionMode,
     compact_context: bool,
     max_system_prompt_chars: usize,
+    dynamic_context: Option<&crate::config::DynamicContextConfig>,
+    dynamic_paths: crate::context::DynamicContextPaths<'_>,
 ) -> String {
     use std::fmt::Write;
     let mut prompt = String::with_capacity(8192);
@@ -3586,6 +3597,22 @@ pub fn build_system_prompt_with_mode_and_autonomy(
         now.format("%Y-%m-%d %H:%M:%S"),
         now.format("%Z")
     );
+
+    // ── 6b. Dynamic context (git snapshot; optional) ─────────────
+    if let Some(dc) = dynamic_context {
+        if dc.enabled {
+            match crate::context::format_dynamic_context_block(dc, workspace_dir, dynamic_paths) {
+                Ok(block) if !block.trim().is_empty() => {
+                    prompt.push_str(&block);
+                    prompt.push_str("\n\n");
+                }
+                Err(e) => {
+                    tracing::debug!(error = %e, "dynamic context assembly skipped");
+                }
+                _ => {}
+            }
+        }
+    }
 
     // ── 7. Runtime ──────────────────────────────────────────────
     let host =
@@ -4812,6 +4839,12 @@ pub async fn start_channels(config: Config) -> Result<()> {
         None
     };
     let native_tools = provider.supports_native_tools();
+    let user_zeroclaw = crate::context::default_user_zeroclaw_dir();
+    let dynamic_paths = crate::context::DynamicContextPaths {
+        global_config_dir: None,
+        user_config_dir: user_zeroclaw.as_deref(),
+        session_dir: None,
+    };
     let mut system_prompt = build_system_prompt_with_mode_and_autonomy(
         &workspace,
         &model,
@@ -4824,6 +4857,8 @@ pub async fn start_channels(config: Config) -> Result<()> {
         config.skills.prompt_injection_mode,
         config.agent.compact_context,
         config.agent.max_system_prompt_chars,
+        Some(&config.agent.dynamic_context),
+        dynamic_paths,
     );
     if !native_tools {
         system_prompt.push_str(&build_tool_instructions(
@@ -8266,6 +8301,8 @@ BTC is currently around $65,000 based on latest tool output."#
             crate::config::SkillsPromptInjectionMode::Full,
             false,
             0,
+            None,
+            crate::context::DynamicContextPaths::default(),
         );
 
         assert!(
@@ -8297,6 +8334,8 @@ BTC is currently around $65,000 based on latest tool output."#
             crate::config::SkillsPromptInjectionMode::Full,
             false,
             0,
+            None,
+            crate::context::DynamicContextPaths::default(),
         );
 
         assert!(

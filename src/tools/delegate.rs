@@ -1143,6 +1143,7 @@ impl DelegateTool {
                 None,
                 None,
                 &crate::config::PacingConfig::default(),
+                &crate::config::ToolResultOffloadConfig::default(),
             ),
         )
         .await;

@@ -67,6 +67,7 @@
 - [reviewer-playbook.md](i18n/zh-CN/contributing/reviewer-playbook.zh-CN.md)
 - [ci-map.md](i18n/zh-CN/contributing/ci-map.zh-CN.md)
 - [actions-source-policy.md](i18n/zh-CN/contributing/actions-source-policy.zh-CN.md)
+- [claude-code-style-integration-roadmap.zh-CN.md](i18n/zh-CN/contributing/claude-code-style-integration-roadmap.zh-CN.md) — Claude Code 风格智能体能力（提案）
 
 ### 安全 / 稳定性
 
