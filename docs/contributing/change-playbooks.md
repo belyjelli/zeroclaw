@@ -54,6 +54,15 @@ For complete code examples of each extension trait, see [extension-examples.md](
 - Cached validation is invalidated on config change — tools must re-validate before the next execution when signaled.
 - See [ADR-004: Tool Shared State Ownership](../architecture/adr-004-tool-shared-state-ownership.md) for the full contract.
 
+## Agent tool loop, QueryEngine, and hooks
+
+- **Single tool path:** `run_tool_call_loop` in `src/agent/loop_.rs` always enters `src/agent/query_engine.rs` via `run_query_loop`, which records [`TransitionReason`](../../src/agent/state.rs) diagnostics and runs **void + blocking** post-turn hooks on success (`src/agent/stop_hooks.rs`). There is **no** `query_engine_v2` Cargo feature; this path is always on.
+- **Compaction:** Pre–LLM-call trimming uses `src/agent/compaction_pipeline.rs` (named stages + `history_pruner`); reactive context retries use the same module’s helpers where wired from the loop.
+- **Transcript-first:** User lines for session JSONL should be committed via `session_transcript::commit_user_turn` at the orchestration boundary before model work (channels and `Agent::turn` / `turn_streamed` follow this pattern).
+- **Hook runner construction:** `crate::hooks::hook_runner_from_config` (`src/hooks/mod.rs`) registers configured builtins when `[hooks].enabled`, and registers **`MemoryConsolidationHook`** whenever `memory.auto_save` is true (even if hooks are disabled), so consolidation stays off the hot path without duplicating `tokio::spawn` in channels.
+- **Gateway:** Build `HookRunner` in `run_gateway`, store on `AppState.hooks`, pass `state.hooks.clone()` into `Agent::from_config_with_hooks` for `/ws/chat` so post-turn hooks match channel behavior.
+- **Extending post-turn behavior:** implement `HookHandler::on_after_turn_completed` / `after_turn_completed_blocking` (they receive `user_message` + `assistant_summary`); register on the same `HookRunner` the gateway or channels use.
+
 ## Architecture Boundary Rules
 
 - Extend capabilities by adding trait implementations + factory wiring first; avoid cross-module rewrites for isolated features.

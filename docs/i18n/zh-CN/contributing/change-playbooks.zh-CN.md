@@ -45,6 +45,15 @@ ZeroClaw 常见扩展和修改模式的分步指南。
 - 导航或关键措辞变更时，保持所有支持的语言（`en`、`zh-CN`、`ja`、`ru`、`fr`、`vi`）的多语言入口点一致。
 - 共享文档措辞变更时，在同一个 PR 中同步对应的本地化文档（或显式记录延迟更新和后续 PR）。
 
+## 智能体工具循环、QueryEngine 与钩子
+
+- **单一工具路径：** `src/agent/loop_.rs` 中的 `run_tool_call_loop` 始终经 `src/agent/query_engine.rs` 的 `run_query_loop` 进入，后者记录 [`TransitionReason`](../../../../src/agent/state.rs) 诊断信息，并在成功结束时运行**并行 + 阻塞**的回合后钩子（`src/agent/stop_hooks.rs`）。**没有** `query_engine_v2` Cargo 特性；该路径始终开启。
+- **压缩：** LLM 调用前的裁剪使用 `src/agent/compaction_pipeline.rs`（命名阶段 + `history_pruner`）；从循环接入的上下文类重试使用同一模块的辅助函数。
+- **转录优先：** 会话 JSONL 的用户行应在模型工作之前于编排边界通过 `session_transcript::commit_user_turn` 落盘（渠道与 `Agent::turn` / `turn_streamed` 遵循此模式）。
+- **钩子运行器构建：** `crate::hooks::hook_runner_from_config`（`src/hooks/mod.rs`）在 `[hooks].enabled` 时注册内置钩子；只要 `memory.auto_save` 为 true 即注册 **`MemoryConsolidationHook`**（即使钩子总开关关闭），从而避免在渠道侧重复 `tokio::spawn` 合并逻辑。
+- **网关：** 在 `run_gateway` 中构建 `HookRunner`，存入 `AppState.hooks`，并将 `state.hooks.clone()` 传入 `Agent::from_config_with_hooks`，使 `/ws/chat` 的回合后钩子与渠道行为一致。
+- **扩展回合后行为：** 实现 `HookHandler::on_after_turn_completed` / `after_turn_completed_blocking`（参数为 `user_message` 与 `assistant_summary`）；在与网关或渠道相同的 `HookRunner` 上注册。
+
 ## 架构边界规则
 
 - 优先通过添加特征实现 + 工厂接线来扩展功能；避免为孤立功能进行跨模块重写。

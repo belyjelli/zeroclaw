@@ -738,7 +738,7 @@ enum ModelCommands {
 
 #[derive(Subcommand, Debug)]
 enum DoctorCommands {
-    /// QueryEngine v2 build flag and recent transition trace (in-process)
+    /// QueryEngine: recent state-transition trace (in-process; see `zeroclaw doctor query-engine`)
     QueryEngine,
     /// Probe model catalogs across providers and report availability
     Models {

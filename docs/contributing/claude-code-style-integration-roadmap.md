@@ -12,7 +12,7 @@ ZeroClaw already provides a Rust-first, lightweight agent runtime (memory RAG, h
 
 ## Baseline (today)
 
-- Orchestration is concentrated in `src/agent/` (including `loop_.rs`); interactive flows use `src/agent/agent.rs` with memory loading and system prompts.
+- Orchestration is concentrated in `src/agent/` (`loop_.rs` for the iterative tool loop, `query_engine.rs` for turn-level diagnostics + post-turn hooks, `compaction_pipeline.rs` / `stop_hooks.rs`); interactive and WebSocket flows use `src/agent/agent.rs` with memory loading and system prompts. The gateway passes a shared `HookRunner` from `AppState` into `Agent::from_config_with_hooks`.
 - Per-turn enrichment includes date/time, memory RAG, hardware RAG, tool filters, and approval hooks.
 - Delegate-style tooling exists (`src/tools/delegate.rs`, model routing profiles) but is not the same as a fully isolated nested “Task” sub-agent.
 - **Persistence is intentionally layered** (not a single blob): interactive CLI uses versioned `SessionRecord` JSON under `~/.zeroclaw/sessions/`; daemon channels keep per-sender turns in memory + optional workspace JSONL (`SessionStore`); gateway uses workspace session backends; optional `[agent.session_transcript]` JSONL is orthogonal. Compaction archives (`sessions/archives/*.jsonl`) back LLM summarization for interactive and channel paths when budgets are exceeded.
