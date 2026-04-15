@@ -17,5 +17,5 @@ if ! command -v curl >/dev/null 2>&1; then
   exit 1
 fi
 
-: "${ZEROCLAW_INSTALLER_URL:=https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/master/scripts/install.sh}"
+: "${ZEROCLAW_INSTALLER_URL:=https://raw.githubusercontent.com/morpheum-labs/zeroclaw/master/scripts/install.sh}"
 exec bash <(curl -fsSL "$ZEROCLAW_INSTALLER_URL") "$@"
