@@ -1,6 +1,8 @@
 use crate::config::Config;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+
+pub mod long_run;
 use std::io::Write;
 use std::path::Path;
 
@@ -162,6 +164,23 @@ pub fn run_query_engine() -> Result<()> {
             );
         }
         None => println!("  Layered memory (last selector): n/a"),
+    }
+    match crate::agent::query_engine::last_memory_injection() {
+        Some(t) => println!(
+            "  Memory compaction injection (last): {}s ago (process-local)",
+            t.elapsed().as_secs()
+        ),
+        None => println!("  Memory compaction injection (last): n/a"),
+    }
+    if let Some(s) = crate::agent::query_engine::peek_session_memory_summary() {
+        let preview: String = s.summary_text.chars().take(120).collect();
+        println!(
+            "  Session memory summary (last): {} chars | preview: {}…",
+            s.summary_text.len(),
+            preview
+        );
+    } else {
+        println!("  Session memory summary (last): n/a");
     }
     println!();
     let tail = crate::agent::query_engine::peek_diagnostics();

@@ -773,6 +773,11 @@ enum DoctorCommands {
         #[arg(long, default_value = "20")]
         limit: usize,
     },
+    /// Long-running hand health (scratchpad, layered memory index, static/dynamic prompt boundary)
+    LongRun {
+        /// Hand id (TOML stem under ~/.zeroclaw/hands). Omit to scan every hand.
+        hand: Option<String>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Default, clap::ValueEnum)]
@@ -1352,6 +1357,9 @@ async fn main() -> Result<()> {
                 contains.as_deref(),
                 limit,
             ),
+            Some(DoctorCommands::LongRun { hand }) => {
+                doctor::long_run::run(&config, hand.as_deref()).await
+            }
             None => doctor::run(&config),
         },
 

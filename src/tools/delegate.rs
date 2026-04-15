@@ -1147,6 +1147,7 @@ impl DelegateTool {
                 &crate::agent::history_pruner::HistoryPrunerConfig::default(),
                 Some(full_prompt),
                 None,
+                crate::agent::loop_::PostTurnMemoryBinding::default(),
             ),
         )
         .await;

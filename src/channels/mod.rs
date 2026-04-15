@@ -2829,6 +2829,10 @@ async fn process_channel_message(
                             &ctx.prompt_config.agent.history_pruning,
                             Some(msg.content.as_str()),
                             None,
+                            crate::agent::loop_::PostTurnMemoryBinding {
+                                memory: Some(std::sync::Arc::clone(&ctx.memory)),
+                                auto_save: ctx.auto_save_memory,
+                            },
                         ),
                     ),
                 ),

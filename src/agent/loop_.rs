@@ -2396,6 +2396,7 @@ pub(crate) async fn agent_turn(
         &crate::agent::history_pruner::HistoryPrunerConfig::default(),
         None,
         None,
+        PostTurnMemoryBinding::default(),
     )
     .await
 }
@@ -2681,6 +2682,13 @@ async fn execute_tools_sequential(
 //   • max_iterations is reached (runaway safety), or
 //   • the cancellation token fires (external abort).
 
+/// Optional memory handle for awaited post-turn consolidation ([`crate::agent::query_engine::run_query_loop`]).
+#[derive(Clone, Default)]
+pub(crate) struct PostTurnMemoryBinding {
+    pub memory: Option<std::sync::Arc<dyn crate::memory::traits::Memory>>,
+    pub auto_save: bool,
+}
+
 /// Public entry for the tool-call loop: QueryEngine diagnostics + [`run_tool_call_loop_body`].
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_tool_call_loop(
@@ -2709,6 +2717,7 @@ pub(crate) async fn run_tool_call_loop(
     history_pruning: &crate::agent::history_pruner::HistoryPrunerConfig,
     turn_user_message: Option<&str>,
     system_prompt_refresh: Option<&crate::agent::system_prompt::SystemPromptAssemblyRefs<'_>>,
+    post_turn_memory: PostTurnMemoryBinding,
 ) -> Result<String> {
     let mut engine_state = crate::agent::state::EngineState::default();
     crate::agent::query_engine::run_query_loop(
@@ -2738,6 +2747,7 @@ pub(crate) async fn run_tool_call_loop(
         history_pruning,
         turn_user_message,
         system_prompt_refresh,
+        post_turn_memory,
     )
     .await
 }
@@ -2834,13 +2844,20 @@ pub(crate) async fn run_tool_call_loop_body(
             crate::agent::state::TransitionReason::PreModelCompaction,
             None,
         );
+        let workspace_for_compaction =
+            system_prompt_refresh.map(|r| r.workspace_dir.to_path_buf());
         let mut ctx = crate::agent::compaction_pipeline::CompactionContext::new(
             iteration,
             last_round_tool_names.clone(),
             crate::agent::compaction_pipeline::CompactionTrigger::Routine,
+            workspace_for_compaction,
         );
         ctx.log_context_signals = iteration > 0;
-        crate::agent::compaction_pipeline::run_pre_llm_phases(history, history_pruning, &ctx)?;
+        let memory_injection = crate::agent::compaction_pipeline::run_pre_llm_phases(
+            history,
+            history_pruning,
+            &ctx,
+        )?;
 
         // Rebuild tool_specs each iteration so newly activated deferred tools appear.
         let mut tool_specs: Vec<crate::tools::ToolSpec> = tools_registry
@@ -2900,7 +2917,18 @@ pub(crate) async fn run_tool_call_loop_body(
             } else {
                 None
             };
-            let layered_for_prompt = layered_memory_cell.as_deref();
+            let merged_layered: Option<String> = {
+                let inj = memory_injection
+                    .as_deref()
+                    .filter(|s| !s.trim().is_empty());
+                match (&layered_memory_cell, inj) {
+                    (Some(a), Some(b)) => Some(format!("{a}\n\n{b}")),
+                    (Some(a), None) => Some(a.clone()),
+                    (None, Some(b)) => Some(b.to_string()),
+                    (None, None) => None,
+                }
+            };
+            let layered_for_prompt = merged_layered.as_deref();
             if let Err(e) = crate::agent::system_prompt::patch_history_system_prompt(
                 &mut system_prompt_assembly_memo,
                 refs,
@@ -4396,6 +4424,10 @@ pub async fn run(
                         &config.agent.history_pruning,
                         Some(effective_msg.as_str()),
                         Some(&assembly_refs_single),
+                        PostTurnMemoryBinding {
+                            memory: Some(std::sync::Arc::clone(&mem)),
+                            auto_save: config.memory.auto_save,
+                        },
                     ),
                 )
                 .await
@@ -4744,6 +4776,10 @@ pub async fn run(
                             &config.agent.history_pruning,
                             Some(effective_input.as_str()),
                             Some(&assembly_refs_session),
+                            PostTurnMemoryBinding {
+                                memory: Some(std::sync::Arc::clone(&mem)),
+                                auto_save: config.memory.auto_save,
+                            },
                         ),
                     )
                     .await
@@ -5755,6 +5791,7 @@ mod tests {
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
             None,
+            PostTurnMemoryBinding::default(),
         )
         .await
         .expect_err("provider without vision support should fail");
@@ -5811,6 +5848,7 @@ mod tests {
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
             None,
+            PostTurnMemoryBinding::default(),
         )
         .await
         .expect_err("oversized payload must fail");
@@ -5860,6 +5898,7 @@ mod tests {
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
             None,
+            PostTurnMemoryBinding::default(),
         )
         .await
         .expect("valid multimodal payload should pass");
@@ -5909,6 +5948,7 @@ mod tests {
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
             None,
+            PostTurnMemoryBinding::default(),
         )
         .await
         .expect_err("should fail without vision_provider config");
@@ -5965,6 +6005,7 @@ mod tests {
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
             None,
+            PostTurnMemoryBinding::default(),
         )
         .await
         .expect_err("should fail when vision provider cannot be created");
@@ -6021,6 +6062,7 @@ mod tests {
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
             None,
+            PostTurnMemoryBinding::default(),
         )
         .await
         .expect("text-only messages should succeed with default provider");
@@ -6078,6 +6120,7 @@ mod tests {
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
             None,
+            PostTurnMemoryBinding::default(),
         )
         .await
         .expect_err("should fail due to nonexistent vision provider");
@@ -6133,6 +6176,7 @@ mod tests {
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
             None,
+            PostTurnMemoryBinding::default(),
         )
         .await
         .expect("empty image markers should not trigger vision routing");
@@ -6188,6 +6232,7 @@ mod tests {
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
             None,
+            PostTurnMemoryBinding::default(),
         )
         .await
         .expect_err("should attempt vision provider creation for multiple images");
@@ -6326,6 +6371,7 @@ mod tests {
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
             None,
+            PostTurnMemoryBinding::default(),
         )
         .await
         .expect("parallel execution should complete");
@@ -6401,6 +6447,7 @@ mod tests {
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
             None,
+            PostTurnMemoryBinding::default(),
         )
         .await
         .expect("cron_add delivery defaults should be injected");
@@ -6468,6 +6515,7 @@ mod tests {
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
             None,
+            PostTurnMemoryBinding::default(),
         )
         .await
         .expect("explicit delivery mode should be preserved");
@@ -6530,6 +6578,7 @@ mod tests {
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
             None,
+            PostTurnMemoryBinding::default(),
         )
         .await
         .expect("loop should finish after deduplicating repeated calls");
@@ -6604,6 +6653,7 @@ mod tests {
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
             None,
+            PostTurnMemoryBinding::default(),
         )
         .await
         .expect("non-interactive shell should succeed for low-risk command");
@@ -6669,6 +6719,7 @@ mod tests {
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
             None,
+            PostTurnMemoryBinding::default(),
         )
         .await
         .expect("loop should finish with exempt tool executing twice");
@@ -6754,6 +6805,7 @@ mod tests {
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
             None,
+            PostTurnMemoryBinding::default(),
         )
         .await
         .expect("loop should complete");
@@ -6816,6 +6868,7 @@ mod tests {
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
             None,
+            PostTurnMemoryBinding::default(),
         )
         .await
         .expect("native fallback id flow should complete");
@@ -6902,6 +6955,7 @@ mod tests {
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
             None,
+            PostTurnMemoryBinding::default(),
         )
         .await
         .expect("native tool-call text should be relayed through turn_event_sink");
@@ -8898,6 +8952,7 @@ Let me check the result."#;
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
             None,
+            PostTurnMemoryBinding::default(),
         )
         .await
         .expect("tool loop should complete");
@@ -9052,6 +9107,7 @@ Let me check the result."#;
                     &crate::agent::history_pruner::HistoryPrunerConfig::default(),
                     None,
                     None,
+                    PostTurnMemoryBinding::default(),
                 ),
             )
             .await
@@ -9135,6 +9191,7 @@ Let me check the result."#;
                     &crate::agent::history_pruner::HistoryPrunerConfig::default(),
                     None,
                     None,
+                    PostTurnMemoryBinding::default(),
                 ),
             )
             .await
@@ -9194,6 +9251,7 @@ Let me check the result."#;
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
             None,
+            PostTurnMemoryBinding::default(),
         )
         .await
         .expect("should succeed without cost scope");

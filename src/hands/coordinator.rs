@@ -228,6 +228,15 @@ fn assemble_hand_system_prompt(
     assemble_once(&ctx)
 }
 
+/// For `zeroclaw doctor long-run`: verify assembled hand system prompt contains the Phase 1 cache boundary marker.
+pub async fn probe_hand_prompt_cache_boundary(config: &Config, hand: &Hand) -> anyhow::Result<bool> {
+    let agent = crate::agent::Agent::from_config(config).await?;
+    let sp = assemble_hand_system_prompt(config, &agent, hand, None)?;
+    Ok(sp
+        .full()
+        .contains(crate::agent::system_prompt::SYSTEM_PROMPT_DYNAMIC_BOUNDARY))
+}
+
 fn context_digest(ctx: &HandContext) -> String {
     let mut s = String::new();
     if !ctx.learned_facts.is_empty() {
@@ -367,12 +376,22 @@ pub async fn run_coordinator_hand(
             &hand.name,
             "single",
             config.agent.max_tool_iterations,
+            agent.memory_handle(),
         )
         .await?;
         append_decision(
             &scratchpad,
             &format!("single_turn ok chars={}", out.final_text.len()),
         )?;
+        if let Some(s) = query_engine::peek_session_memory_summary() {
+            let digest: String = s.summary_text.chars().take(160).collect();
+            if !digest.trim().is_empty() {
+                append_decision(
+                    &scratchpad,
+                    &format!("post_turn_memory_digest: {digest}"),
+                )?;
+            }
+        }
         return Ok(out.final_text);
     }
 
@@ -434,6 +453,7 @@ pub async fn run_coordinator_hand(
             &hand.name,
             *phase,
             max_it,
+            agent.memory_handle(),
         )
         .await
         {
@@ -459,6 +479,16 @@ pub async fn run_coordinator_hand(
                 out.final_text.trim().is_empty()
             ),
         )?;
+
+        if let Some(s) = query_engine::peek_session_memory_summary() {
+            let digest: String = s.summary_text.chars().take(160).collect();
+            if !digest.trim().is_empty() {
+                append_decision(
+                    &scratchpad,
+                    &format!("post_turn_memory_digest: {digest}"),
+                )?;
+            }
+        }
 
         if *phase == "research" && out.final_text.trim().is_empty() {
             append_decision(

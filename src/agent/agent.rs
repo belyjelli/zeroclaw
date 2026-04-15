@@ -391,6 +391,11 @@ impl Agent {
         self.memory_session_id = session_id;
     }
 
+    #[must_use]
+    pub fn memory_handle(&self) -> Arc<dyn Memory> {
+        Arc::clone(&self.memory)
+    }
+
     /// Provider reference (e.g. hand coordinator worker loops).
     pub fn provider_ref(&self) -> &dyn Provider {
         self.provider.as_ref()
@@ -684,6 +689,20 @@ impl Agent {
         user_message: &str,
         assistant_summary: &str,
     ) {
+        if self.auto_save {
+            match crate::memory::consolidation::consolidate_turn(
+                self.provider.as_ref(),
+                self.model_name.as_str(),
+                self.memory.as_ref(),
+                user_message,
+                assistant_summary,
+            )
+            .await
+            {
+                Ok(r) => crate::agent::query_engine::record_session_memory_from_consolidation(&r),
+                Err(e) => tracing::debug!(error = %e, "gateway post-turn consolidation failed"),
+            }
+        }
         if let Some(ref h) = self.hooks {
             crate::agent::stop_hooks::fire_after_turn_void(
                 h,

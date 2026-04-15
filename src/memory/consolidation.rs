@@ -40,14 +40,15 @@ Do not include any text outside the JSON object."#;
 /// Phase 1: Write a history entry to the Daily memory category.
 /// Phase 2: Write a memory update to the Core category (if the LLM identified new facts).
 ///
-/// This function is designed to be called fire-and-forget via `tokio::spawn`.
+/// Callers should invoke this with `.await` on the hot path when memory persistence is required.
+#[allow(clippy::too_many_lines)]
 pub async fn consolidate_turn(
     provider: &dyn Provider,
     model: &str,
     memory: &dyn Memory,
     user_message: &str,
     assistant_response: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<ConsolidationResult> {
     let turn_text = format!("User: {user_message}\nAssistant: {assistant_response}");
 
     // Truncate very long turns to avoid wasting tokens on consolidation.
@@ -169,7 +170,7 @@ pub async fn consolidate_turn(
         }
     }
 
-    Ok(())
+    Ok(result)
 }
 
 /// Parse the LLM's consolidation response, with fallback for malformed JSON.

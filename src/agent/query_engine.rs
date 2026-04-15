@@ -7,12 +7,13 @@ use super::state::{EngineState, TransitionReason, TurnTransition};
 use super::TurnEventSink;
 use crate::approval::ApprovalManager;
 use crate::hooks::{HookResult, HookRunner};
+use crate::memory::consolidation::ConsolidationResult;
 use crate::observability::Observer;
 use crate::providers::{ChatMessage, Provider};
 use crate::tools::Tool;
 use anyhow::Result;
 use std::collections::VecDeque;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use tokio_util::sync::CancellationToken;
 
 const DIAG_CAP: usize = 64;
@@ -134,6 +135,108 @@ pub fn last_layered_memory_selection() -> Option<LayeredMemoryDiag> {
         .clone()
 }
 
+/// Latest session-memory digest for compaction injection and diagnostics (~300 token budget).
+#[derive(Debug, Clone)]
+pub struct SessionMemorySummary {
+    pub summary_text: String,
+    pub updated_at: std::time::SystemTime,
+}
+
+static LAST_SESSION_MEMORY_SUMMARY: LazyLock<Mutex<Option<SessionMemorySummary>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+static LAST_MEMORY_INJECTION: LazyLock<Mutex<Option<std::time::Instant>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+/// Update in-process session summary from a consolidation result (called after awaited consolidation).
+pub fn record_session_memory_from_consolidation(r: &ConsolidationResult) {
+    let mut parts: Vec<String> = Vec::new();
+    let he = r.history_entry.trim();
+    if !he.is_empty() {
+        parts.push(format!("**Turn:** {he}"));
+    }
+    for f in r.facts.iter().take(6) {
+        let t = f.trim();
+        if !t.is_empty() {
+            parts.push(format!("- {t}"));
+        }
+    }
+    if let Some(ref t) = r.trend {
+        let t = t.trim();
+        if !t.is_empty() {
+            parts.push(format!("**Trend:** {t}"));
+        }
+    }
+    if let Some(ref u) = r.memory_update {
+        let u = u.trim();
+        if !u.is_empty() {
+            parts.push(format!("**Memory:** {u}"));
+        }
+    }
+    let mut text = parts.join("\n");
+    const MAX_CHARS: usize = 1200;
+    if text.len() > MAX_CHARS {
+        let end = text
+            .char_indices()
+            .map(|(i, _)| i)
+            .take_while(|&i| i <= MAX_CHARS)
+            .last()
+            .unwrap_or(0);
+        text = format!("{}…", &text[..end]);
+    }
+    let summary = SessionMemorySummary {
+        summary_text: text,
+        updated_at: std::time::SystemTime::now(),
+    };
+    let mut g = LAST_SESSION_MEMORY_SUMMARY
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    *g = Some(summary);
+}
+
+#[must_use]
+pub fn peek_session_memory_summary() -> Option<SessionMemorySummary> {
+    LAST_SESSION_MEMORY_SUMMARY
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+}
+
+pub fn record_last_memory_injection_now() {
+    *LAST_MEMORY_INJECTION
+        .lock()
+        .unwrap_or_else(|p| p.into_inner()) = Some(std::time::Instant::now());
+}
+
+#[must_use]
+pub fn last_memory_injection() -> Option<std::time::Instant> {
+    LAST_MEMORY_INJECTION
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+}
+
+async fn run_engine_post_turn_consolidation(
+    provider: &dyn Provider,
+    model: &str,
+    memory: &Arc<dyn crate::memory::traits::Memory>,
+    user_message: &str,
+    assistant_summary: &str,
+) {
+    match crate::memory::consolidation::consolidate_turn(
+        provider,
+        model,
+        memory.as_ref(),
+        user_message,
+        assistant_summary,
+    )
+    .await
+    {
+        Ok(r) => record_session_memory_from_consolidation(&r),
+        Err(e) => tracing::debug!(error = %e, "post-turn memory consolidation failed"),
+    }
+}
+
 /// Heuristic: model may have stopped early due to output token cap — caller may append a nudge.
 #[must_use]
 pub fn should_request_token_continuation(
@@ -180,6 +283,7 @@ pub(crate) async fn run_query_loop(
     history_pruning: &crate::agent::history_pruner::HistoryPrunerConfig,
     turn_user_message: Option<&str>,
     system_prompt_refresh: Option<&super::system_prompt::SystemPromptAssemblyRefs<'_>>,
+    post_turn_memory: super::loop_::PostTurnMemoryBinding,
 ) -> Result<String> {
     state.last_transition = Some(TransitionReason::BeginTurn);
     record_transition(TransitionReason::BeginTurn, None);
@@ -218,6 +322,21 @@ pub(crate) async fn run_query_loop(
         Err(e) => {
             state.last_transition = Some(TransitionReason::TurnError);
             record_transition(TransitionReason::TurnError, Some(e.to_string()));
+        }
+    }
+    if let Ok(text) = &res {
+        if post_turn_memory.auto_save {
+            if let Some(mem) = &post_turn_memory.memory {
+                let user = turn_user_message.unwrap_or("");
+                run_engine_post_turn_consolidation(
+                    provider,
+                    model,
+                    mem,
+                    user,
+                    text.as_str(),
+                )
+                .await;
+            }
         }
     }
     if let (Ok(text), Some(hooks)) = (&res, hooks) {
@@ -284,6 +403,7 @@ pub async fn run_worker_fork(
     hand_name: &str,
     phase: &str,
     max_tool_iterations: usize,
+    memory: Arc<dyn crate::memory::traits::Memory>,
 ) -> Result<WorkerForkOutcome> {
     use std::collections::HashSet;
 
@@ -330,6 +450,23 @@ pub async fn run_worker_fork(
         worker_tool_names,
     );
 
+    if cfg.memory.layered.enabled && cfg.memory.auto_save {
+        crate::memory::layered_context::install_pending_layered_turn(Some(
+            crate::memory::layered_context::LayeredTurnContext {
+                workspace_dir: cfg.workspace_dir.clone(),
+                session_key: format!("hand:{hand_name}"),
+                layered: cfg.memory.layered.clone(),
+            },
+        ));
+    } else {
+        crate::memory::layered_context::install_pending_layered_turn(None);
+    }
+
+    let post_turn = super::loop_::PostTurnMemoryBinding {
+        memory: Some(Arc::clone(&memory)),
+        auto_save: cfg.memory.auto_save,
+    };
+
     let res = super::loop_::run_tool_call_loop(
         provider,
         &mut history,
@@ -356,6 +493,7 @@ pub async fn run_worker_fork(
         &cfg.agent.history_pruning,
         Some(worker_goal),
         None,
+        post_turn,
     )
     .await;
 
