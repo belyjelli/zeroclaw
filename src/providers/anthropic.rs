@@ -1339,10 +1339,7 @@ mod tests {
         use crate::agent::system_prompt::SYSTEM_PROMPT_DYNAMIC_BOUNDARY;
         let messages = vec![ChatMessage {
             role: "system".to_string(),
-            content: format!(
-                "STATIC_PART{}DYNAMIC_TAIL",
-                SYSTEM_PROMPT_DYNAMIC_BOUNDARY
-            ),
+            content: format!("STATIC_PART{}DYNAMIC_TAIL", SYSTEM_PROMPT_DYNAMIC_BOUNDARY),
         }];
         let (system_prompt, _) = AnthropicProvider::convert_messages(&messages);
         match system_prompt.unwrap() {

@@ -1,4 +1,5 @@
 pub mod audit;
+pub mod auto_memory;
 pub mod backend;
 pub mod chunker;
 pub mod cli;
@@ -11,7 +12,6 @@ pub mod importance;
 pub mod knowledge_graph;
 #[cfg(feature = "memory-postgres")]
 pub mod knowledge_graph_pg;
-pub mod auto_memory;
 pub mod layered_context;
 pub mod layered_paths;
 pub mod layered_selector;
@@ -22,7 +22,6 @@ pub use layered_context::{
 pub use layered_selector::{LayeredMemorySelectionResult, MemoryLayer};
 pub mod lucid;
 pub mod markdown;
-pub mod session_memory;
 pub mod none;
 pub mod policy;
 #[cfg(feature = "memory-postgres")]
@@ -30,6 +29,7 @@ pub mod postgres;
 pub mod qdrant;
 pub mod response_cache;
 pub mod retrieval;
+pub mod session_memory;
 pub mod snapshot;
 pub mod sqlite;
 pub mod traits;

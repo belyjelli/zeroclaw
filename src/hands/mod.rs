@@ -1,9 +1,11 @@
+pub mod coordinator;
 pub mod types;
 
-pub use types::{Hand, HandContext, HandRun, HandRunStatus};
+pub use coordinator::run_coordinator_hand;
+pub use types::{CoordinatorMode, Hand, HandContext, HandRun, HandRunStatus, WorkerSpec};
 
 use anyhow::{Context, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Load all hand definitions from TOML files in the given directory.
 ///
@@ -66,6 +68,20 @@ pub fn save_hand_context(hands_dir: &Path, context: &HandContext) -> Result<()> 
     std::fs::write(&path, json)
         .with_context(|| format!("failed to write hand context: {}", path.display()))?;
     Ok(())
+}
+
+/// `~/.zeroclaw/scratchpad/<hand_id>/` (caller supplies `zeroclaw_dir` from [`crate::context::default_user_zeroclaw_dir`]).
+#[must_use]
+pub fn scratchpad_dir_for_hand(zeroclaw_dir: &Path, hand_id: &str) -> PathBuf {
+    zeroclaw_dir.join("scratchpad").join(hand_id)
+}
+
+/// Create the scratchpad directory for a hand if missing.
+pub fn ensure_scratchpad_dir(zeroclaw_dir: &Path, hand_id: &str) -> Result<PathBuf> {
+    let dir = scratchpad_dir_for_hand(zeroclaw_dir, hand_id);
+    std::fs::create_dir_all(&dir)
+        .with_context(|| format!("failed to create scratchpad dir: {}", dir.display()))?;
+    Ok(dir)
 }
 
 #[cfg(test)]

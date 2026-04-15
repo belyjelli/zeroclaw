@@ -3,6 +3,39 @@ use serde::{Deserialize, Serialize};
 
 use crate::cron::Schedule;
 
+// ── Coordinator mode ───────────────────────────────────────────
+
+/// Opt-in coordinator/worker split for long-running hands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CoordinatorMode {
+    /// Standard single-agent behaviour (when a runner exists).
+    #[default]
+    Disabled,
+    /// Full Research → Synthesis → Implementation → Verification pipeline.
+    Enabled,
+    /// Only the research worker phase runs, then a short synthesis is produced from scratchpad.
+    ResearchOnly,
+    /// Skip research; run synthesis, implementation, and verification workers.
+    ExecutionOnly,
+}
+
+/// Specification for one short-lived worker sub-loop.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkerSpec {
+    /// High-level phase label (e.g. research, synthesis).
+    pub phase: String,
+    /// Worker-specific objective shown to the model.
+    pub goal: String,
+    /// Tool names the worker may call (must be a subset of the hand allowlist).
+    pub allowed_tools: Vec<String>,
+    /// Markdown file under the hand scratchpad (e.g. `research.md`).
+    pub scratchpad_rel_path: String,
+    /// Override for max tool iterations (None = use agent config default).
+    #[serde(default)]
+    pub max_tool_iterations: Option<usize>,
+}
+
 // ── Hand ───────────────────────────────────────────────────────
 
 /// A Hand is an autonomous agent package that runs on a schedule,
@@ -36,6 +69,9 @@ pub struct Hand {
     /// Maximum runs to keep in history
     #[serde(default = "default_max_runs")]
     pub max_history: usize,
+    /// When not [`CoordinatorMode::Disabled`], `zeroclaw hands run` uses the coordinator/worker pipeline.
+    #[serde(default)]
+    pub coordinator_mode: CoordinatorMode,
 }
 
 fn default_true() -> bool {
@@ -155,6 +191,7 @@ mod tests {
             model: Some("claude-opus-4-6".into()),
             active: true,
             max_history: 50,
+            coordinator_mode: CoordinatorMode::Disabled,
         }
     }
 
@@ -193,6 +230,23 @@ tz = "America/New_York"
         assert!(hand.knowledge.is_empty());
         assert!(hand.allowed_tools.is_none());
         assert!(hand.model.is_none());
+        assert_eq!(hand.coordinator_mode, CoordinatorMode::Disabled);
+    }
+
+    #[test]
+    fn hand_deserializes_coordinator_mode() {
+        let toml_str = r#"
+name = "coord-hand"
+description = "Test"
+prompt = "Do work."
+coordinator_mode = "enabled"
+
+[schedule]
+kind = "every"
+every_ms = 60000
+"#;
+        let hand: Hand = toml::from_str(toml_str).unwrap();
+        assert_eq!(hand.coordinator_mode, CoordinatorMode::Enabled);
     }
 
     #[test]
@@ -233,6 +287,21 @@ every_ms = 3600000
         let parsed: Hand = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.name, hand.name);
         assert_eq!(parsed.max_history, hand.max_history);
+        assert_eq!(parsed.coordinator_mode, hand.coordinator_mode);
+    }
+
+    #[test]
+    fn worker_spec_json_roundtrip() {
+        let spec = WorkerSpec {
+            phase: "research".into(),
+            goal: "Find X".into(),
+            allowed_tools: vec!["file_read".into()],
+            scratchpad_rel_path: "research.md".into(),
+            max_tool_iterations: Some(8),
+        };
+        let j = serde_json::to_string(&spec).unwrap();
+        let p: WorkerSpec = serde_json::from_str(&j).unwrap();
+        assert_eq!(p, spec);
     }
 
     // ── HandRunStatus ──────────────────────────────────────────

@@ -322,9 +322,7 @@ impl HookRunner {
         let futs: Vec<_> = self
             .handlers
             .iter()
-            .map(|h| {
-                h.on_after_turn_completed(channel, user_message, assistant_summary)
-            })
+            .map(|h| h.on_after_turn_completed(channel, user_message, assistant_summary))
             .collect();
         join_all(futs).await;
     }
@@ -337,18 +335,19 @@ impl HookRunner {
     ) -> HookResult<()> {
         for h in &self.handlers {
             let hook_name = h.name();
-            match AssertUnwindSafe(
-                h.after_turn_completed_blocking(channel, user_message, assistant_summary),
-            )
-                .catch_unwind()
-                .await
+            match AssertUnwindSafe(h.after_turn_completed_blocking(
+                channel,
+                user_message,
+                assistant_summary,
+            ))
+            .catch_unwind()
+            .await
             {
                 Ok(HookResult::Continue(())) => {}
                 Ok(HookResult::Cancel(reason)) => {
                     info!(
                         hook = hook_name,
-                        reason,
-                        "after_turn_completed_blocking cancelled by hook"
+                        reason, "after_turn_completed_blocking cancelled by hook"
                     );
                     return HookResult::Cancel(reason);
                 }

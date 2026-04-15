@@ -15,8 +15,7 @@ pub fn workspace_bucket_id(workspace_dir: &Path) -> String {
 /// `~/.zeroclaw` when available; otherwise `workspace/.zeroclaw` as a portable fallback.
 #[must_use]
 pub fn resolved_zeroclaw_dir(workspace_dir: &Path) -> PathBuf {
-    crate::context::default_user_zeroclaw_dir()
-        .unwrap_or_else(|| workspace_dir.join(".zeroclaw"))
+    crate::context::default_user_zeroclaw_dir().unwrap_or_else(|| workspace_dir.join(".zeroclaw"))
 }
 
 /// AutoMemory root: `~/.zeroclaw/memory/<bucket>/`.

@@ -48,6 +48,17 @@ pub fn drain_diagnostics() -> Vec<TurnTransition> {
         .collect()
 }
 
+/// Clone recent transitions without mutating the deque (read-only diagnostics).
+#[must_use]
+pub fn peek_diagnostics() -> Vec<TurnTransition> {
+    QUERY_ENGINE_DIAG
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .iter()
+        .map(|e| e.transition.clone())
+        .collect()
+}
+
 /// Last system prompt assembly stats (in-process), for `zeroclaw doctor query-engine`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SystemPromptAssemblyDiag {
@@ -222,4 +233,153 @@ pub(crate) async fn run_query_loop(
         }
     }
     res
+}
+
+// ── Hand coordinator: worker fork + last-line diagnostics ─────────────────
+
+static LAST_COORDINATOR_SUMMARY: LazyLock<Mutex<Option<String>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+/// Last coordinator status line for `zeroclaw doctor query-engine`.
+pub fn set_last_coordinator_summary(summary: Option<String>) {
+    *LAST_COORDINATOR_SUMMARY
+        .lock()
+        .unwrap_or_else(|p| p.into_inner()) = summary;
+}
+
+#[must_use]
+pub fn last_coordinator_summary() -> Option<String> {
+    LAST_COORDINATOR_SUMMARY
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+}
+
+/// Outcome from one forked worker [`run_worker_fork`] sub-loop.
+#[derive(Debug, Clone)]
+pub struct WorkerForkOutcome {
+    pub final_text: String,
+}
+
+/// Run a short-lived worker with the same provider as the parent agent, excluding every
+/// tool not permitted for this worker and not in the hand allowlist (via loop exclusions).
+#[allow(clippy::too_many_arguments)]
+pub async fn run_worker_fork(
+    cfg: &crate::config::Config,
+    provider: &dyn Provider,
+    provider_name: &str,
+    model: &str,
+    temperature: f64,
+    parent_system: &super::system_prompt::SystemPrompt,
+    parent_summary: &str,
+    worker_goal: &str,
+    worker_tool_names: &[String],
+    // When `Some`, only these tool names may run (hand TOML allowlist).
+    hand_allowed_tools: Option<&[String]>,
+    tools_registry: &[Box<dyn Tool>],
+    observer: &dyn Observer,
+    hand_name: &str,
+    phase: &str,
+    max_tool_iterations: usize,
+) -> Result<WorkerForkOutcome> {
+    use std::collections::HashSet;
+
+    let worker_allowed: HashSet<&str> = worker_tool_names.iter().map(String::as_str).collect();
+
+    fn tool_ok_for_hand(allowed: Option<&[String]>, tool_name: &str) -> bool {
+        match allowed {
+            None => true,
+            Some(list) => list.iter().any(|x| x == tool_name),
+        }
+    }
+
+    let mut excluded: Vec<String> = tools_registry
+        .iter()
+        .map(|t| t.name().to_string())
+        .filter(|n| {
+            let n = n.as_str();
+            !tool_ok_for_hand(hand_allowed_tools, n) || !worker_allowed.contains(n)
+        })
+        .collect();
+
+    if !worker_allowed.contains("delegate")
+        && tools_registry.iter().any(|t| t.name() == "delegate")
+        && !excluded.iter().any(|e| e == "delegate")
+    {
+        excluded.push("delegate".into());
+    }
+
+    record_transition(
+        TransitionReason::CoordinatorWorkerSpawn,
+        Some(format!(
+            "hand={hand_name} phase={phase} allow=[{}]",
+            worker_tool_names.join(",")
+        )),
+    );
+    set_last_coordinator_summary(Some(format!(
+        "Coordinator: worker `{phase}` starting (hand `{hand_name}`)"
+    )));
+
+    let mut history = super::system_prompt::build_forked_history(
+        parent_system,
+        parent_summary,
+        worker_goal,
+        worker_tool_names,
+    );
+
+    let res = super::loop_::run_tool_call_loop(
+        provider,
+        &mut history,
+        tools_registry,
+        observer,
+        provider_name,
+        model,
+        temperature,
+        true,
+        None,
+        "hands:coordinator",
+        None,
+        &cfg.multimodal,
+        max_tool_iterations,
+        None,
+        None,
+        None,
+        &excluded,
+        &[],
+        None,
+        None,
+        &cfg.pacing,
+        &cfg.agent.tool_result_offload,
+        &cfg.agent.history_pruning,
+        Some(worker_goal),
+        None,
+    )
+    .await;
+
+    match &res {
+        Ok(text) => {
+            record_transition(
+                TransitionReason::CoordinatorWorkerComplete,
+                Some(format!(
+                    "hand={hand_name} phase={phase} ok chars={}",
+                    text.len()
+                )),
+            );
+            set_last_coordinator_summary(Some(format!(
+                "Coordinator: worker `{phase}` completed ({} chars)",
+                text.len()
+            )));
+        }
+        Err(e) => {
+            record_transition(
+                TransitionReason::CoordinatorWorkerComplete,
+                Some(format!("hand={hand_name} phase={phase} err={e}")),
+            );
+            set_last_coordinator_summary(Some(format!(
+                "Coordinator: worker `{phase}` failed: {e}"
+            )));
+        }
+    }
+
+    res.map(|final_text| WorkerForkOutcome { final_text })
 }

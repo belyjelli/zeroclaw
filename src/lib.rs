@@ -573,6 +573,18 @@ Examples:
     FlashNucleo,
 }
 
+/// Autonomous hand packages (`~/.zeroclaw/hands/*.toml`)
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum HandsCommands {
+    /// List hand definitions from `~/.zeroclaw/hands/`
+    List,
+    /// Run one hand (coordinator + workers when `coordinator_mode` is set)
+    Run {
+        /// Hand `name` from its TOML file
+        name: String,
+    },
+}
+
 /// SOP management subcommands
 #[derive(Subcommand, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SopCommands {

@@ -118,8 +118,9 @@ use config::Config;
 
 // Re-export so binary modules can use crate::<CommandEnum> while keeping a single source of truth.
 pub use zeroclaw::{
-    ChannelCommands, CronCommands, GatewayCommands, HardwareCommands, IntegrationCommands,
-    MigrateCommands, PeripheralCommands, ServiceCommands, SkillCommands, SopCommands,
+    ChannelCommands, CronCommands, GatewayCommands, HandsCommands, HardwareCommands,
+    IntegrationCommands, MigrateCommands, PeripheralCommands, ServiceCommands, SkillCommands,
+    SopCommands,
 };
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
@@ -540,6 +541,12 @@ Examples:
         /// Target shell
         #[arg(value_enum)]
         shell: CompletionShell,
+    },
+
+    /// List or run autonomous hand packages (`~/.zeroclaw/hands/`)
+    Hands {
+        #[command(subcommand)]
+        hands_command: Option<zeroclaw::HandsCommands>,
     },
 
     /// Launch or install the companion desktop app
@@ -1358,6 +1365,46 @@ async fn main() -> Result<()> {
         } => integrations::handle_command(integration_command, &config),
 
         Commands::Skills { skill_command } => skills::handle_command(skill_command, &config),
+
+        Commands::Hands { hands_command } => {
+            let zdir = context::default_user_zeroclaw_dir()
+                .ok_or_else(|| anyhow::anyhow!("Could not resolve ~/.zeroclaw (HOME unset?)"))?;
+            let hands_dir = zdir.join("hands");
+            match hands_command {
+                None => {
+                    println!("Usage: zeroclaw hands list");
+                    println!("       zeroclaw hands run <name>");
+                    Ok(())
+                }
+                Some(zeroclaw::HandsCommands::List) => {
+                    let hands = zeroclaw::hands::load_hands(&hands_dir)?;
+                    if hands.is_empty() {
+                        println!("No hands in {}", hands_dir.display());
+                    } else {
+                        for h in hands {
+                            println!(
+                                "{} — {} (coordinator_mode: {:?})",
+                                h.name, h.description, h.coordinator_mode
+                            );
+                        }
+                    }
+                    Ok(())
+                }
+                Some(zeroclaw::HandsCommands::Run { name }) => {
+                    let hands = zeroclaw::hands::load_hands(&hands_dir)?;
+                    let hand = hands.into_iter().find(|h| h.name == name).ok_or_else(|| {
+                        anyhow::anyhow!("hand `{name}` not found under {}", hands_dir.display())
+                    })?;
+                    let lib_cfg: zeroclaw::Config =
+                        serde_json::from_value(serde_json::to_value(&config)?)
+                            .context("hand run: bridge config into library Config")?;
+                    let out =
+                        zeroclaw::hands::run_coordinator_hand(&lib_cfg, &hands_dir, &hand).await?;
+                    println!("{out}");
+                    Ok(())
+                }
+            }
+        }
 
         Commands::Migrate { migrate_command } => {
             migration::handle_command(migrate_command, &config).await

@@ -26,6 +26,12 @@ pub enum TransitionReason {
     TurnComplete,
     /// Turn ended with an error (non-cancel).
     TurnError,
+    /// Hand coordinator mode started (diagnostics).
+    CoordinatorModeActive,
+    /// A forked worker sub-loop is starting.
+    CoordinatorWorkerSpawn,
+    /// A forked worker sub-loop finished (success or failure string in detail).
+    CoordinatorWorkerComplete,
 }
 
 /// One transition step recorded for QueryEngine diagnostics.

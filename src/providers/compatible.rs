@@ -826,8 +826,8 @@ fn sse_bytes_to_chunks(
                     };
 
                     buffer.push_str(&text);
-                    
-                   // Process complete lines
+
+                    // Process complete lines
                     while let Some(pos) = buffer.find('\n') {
                         let line = buffer[..pos].to_string();
                         buffer.drain(..=pos);

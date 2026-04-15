@@ -2871,36 +2871,35 @@ pub(crate) async fn run_tool_call_loop_body(
                 }
                 static_suffix.push_str(refs.deferred_section);
             }
-            let layered_memory_cell: Option<String> =
-                if let Some(ref lam) = refs.layered {
-                    if lam.memory.layered.enabled {
-                        let q = last_user_content_for_layered(history);
-                        let res = memory::layered_selector::select_relevant(
-                            q,
-                            refs.workspace_dir,
-                            lam.session_key,
-                            &lam.memory.layered,
-                            lam.memory,
-                            lam.embedding_api_key,
-                            lam.embedding_routes,
-                        )
-                        .await;
-                        crate::agent::query_engine::record_layered_memory_selection(
-                            res.topics_picked,
-                            res.session_injected,
-                            res.staleness_warnings,
-                        );
-                        if res.text.trim().is_empty() {
-                            None
-                        } else {
-                            Some(res.text)
-                        }
-                    } else {
+            let layered_memory_cell: Option<String> = if let Some(ref lam) = refs.layered {
+                if lam.memory.layered.enabled {
+                    let q = last_user_content_for_layered(history);
+                    let res = memory::layered_selector::select_relevant(
+                        q,
+                        refs.workspace_dir,
+                        lam.session_key,
+                        &lam.memory.layered,
+                        lam.memory,
+                        lam.embedding_api_key,
+                        lam.embedding_routes,
+                    )
+                    .await;
+                    crate::agent::query_engine::record_layered_memory_selection(
+                        res.topics_picked,
+                        res.session_injected,
+                        res.staleness_warnings,
+                    );
+                    if res.text.trim().is_empty() {
                         None
+                    } else {
+                        Some(res.text)
                     }
                 } else {
                     None
-                };
+                }
+            } else {
+                None
+            };
             let layered_for_prompt = layered_memory_cell.as_deref();
             if let Err(e) = crate::agent::system_prompt::patch_history_system_prompt(
                 &mut system_prompt_assembly_memo,
@@ -4355,16 +4354,15 @@ pub async fn run(
                     None
                 },
             };
-            let layered_pending =
-                if config.memory.layered.enabled && config.memory.auto_save {
-                    Some(crate::memory::layered_context::LayeredTurnContext {
-                        workspace_dir: config.workspace_dir.clone(),
-                        session_key: transcript_session_key.clone(),
-                        layered: config.memory.layered.clone(),
-                    })
-                } else {
-                    None
-                };
+            let layered_pending = if config.memory.layered.enabled && config.memory.auto_save {
+                Some(crate::memory::layered_context::LayeredTurnContext {
+                    workspace_dir: config.workspace_dir.clone(),
+                    session_key: transcript_session_key.clone(),
+                    layered: config.memory.layered.clone(),
+                })
+            } else {
+                None
+            };
             crate::memory::layered_context::install_pending_layered_turn(layered_pending);
             match crate::agent::session_transcript::SESSION_TRANSCRIPT_CONTEXT
                 .scope(
@@ -4704,16 +4702,15 @@ pub async fn run(
                         None
                     },
                 };
-                let layered_pending =
-                    if config.memory.layered.enabled && config.memory.auto_save {
-                        Some(crate::memory::layered_context::LayeredTurnContext {
-                            workspace_dir: config.workspace_dir.clone(),
-                            session_key: transcript_session_key.clone(),
-                            layered: config.memory.layered.clone(),
-                        })
-                    } else {
-                        None
-                    };
+                let layered_pending = if config.memory.layered.enabled && config.memory.auto_save {
+                    Some(crate::memory::layered_context::LayeredTurnContext {
+                        workspace_dir: config.workspace_dir.clone(),
+                        session_key: transcript_session_key.clone(),
+                        layered: config.memory.layered.clone(),
+                    })
+                } else {
+                    None
+                };
                 crate::memory::layered_context::install_pending_layered_turn(layered_pending);
                 match crate::agent::session_transcript::SESSION_TRANSCRIPT_CONTEXT
                     .scope(

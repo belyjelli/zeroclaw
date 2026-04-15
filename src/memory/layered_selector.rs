@@ -173,14 +173,13 @@ pub async fn select_relevant(
     let cands = load_topic_candidates(&topics_dir).await;
 
     let resolved = super::resolve_memory_embedding(memory, embedding_routes, embedding_api_key);
-    let embedder: Arc<dyn crate::memory::embeddings::EmbeddingProvider> = Arc::from(
-        crate::memory::embeddings::create_embedding_provider(
+    let embedder: Arc<dyn crate::memory::embeddings::EmbeddingProvider> =
+        Arc::from(crate::memory::embeddings::create_embedding_provider(
             resolved.provider.trim(),
             resolved.api_key.as_deref(),
             resolved.model.trim(),
             resolved.dimensions,
-        ),
-    );
+        ));
 
     let q_vec = if embedder.dimensions() > 0 {
         embedder.embed_one(query).await.ok()
@@ -190,10 +189,7 @@ pub async fn select_relevant(
 
     let mut scored: Vec<(f32, TopicCandidate)> = Vec::new();
     for c in cands {
-        let mut sc = keyword_score(
-            &format!("{} {} {}", c.title, c.tags, c.body_snip),
-            &tokens,
-        );
+        let mut sc = keyword_score(&format!("{} {} {}", c.title, c.tags, c.body_snip), &tokens);
         let norm_kw = (sc / (tokens.len().max(1) as f32)).min(1.0);
         if let Some(ref qv) = q_vec {
             if let Ok(tv) = embedder.embed_one(&c.title).await {
@@ -229,10 +225,7 @@ pub async fn select_relevant(
         if let Ok(ix) = tokio::fs::read_to_string(&idx_path).await {
             let excerpt: String = ix.lines().take(48).collect::<Vec<_>>().join("\n");
             if !excerpt.trim().is_empty() {
-                let _ = writeln!(
-                    block,
-                    "### AutoMemory index (excerpt)\n\n{excerpt}\n"
-                );
+                let _ = writeln!(block, "### AutoMemory index (excerpt)\n\n{excerpt}\n");
             }
         }
     }
@@ -255,21 +248,14 @@ pub async fn select_relevant(
         let _ = writeln!(
             block,
             "#### {} (`{}`)\n\n{}{}\n",
-            c.title,
-            rel,
-            staleness_line,
-            c.body_snip
+            c.title, rel, staleness_line, c.body_snip
         );
         picked += 1;
     }
 
     if let Some(sess) = session_memory::read_latest_summary(workspace_dir, session_key).await {
         if !sess.trim().is_empty() {
-            let _ = writeln!(
-                block,
-                "### Latest session memory\n\n{}\n",
-                sess.trim()
-            );
+            let _ = writeln!(block, "### Latest session memory\n\n{}\n", sess.trim());
             r.session_injected = true;
         }
     }

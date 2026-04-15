@@ -137,6 +137,10 @@ pub fn run(config: &Config) -> Result<()> {
 pub fn run_query_engine() -> Result<()> {
     println!("QueryEngine diagnostics");
     println!();
+    if let Some(s) = crate::agent::query_engine::last_coordinator_summary() {
+        println!("  Coordinator (last activity): {s}");
+        println!();
+    }
     match crate::agent::query_engine::last_system_prompt_assembly() {
         Some(d) => {
             println!(
@@ -160,13 +164,31 @@ pub fn run_query_engine() -> Result<()> {
         None => println!("  Layered memory (last selector): n/a"),
     }
     println!();
-    let tail = crate::agent::query_engine::drain_diagnostics();
+    let tail = crate::agent::query_engine::peek_diagnostics();
     if tail.is_empty() {
         println!("  (no recorded transitions since process start)");
     } else {
         println!("  Recent transitions (oldest → newest, capped):");
-        for t in tail {
+        for t in &tail {
             println!("    - {:?}: {:?}", t.reason, t.detail);
+        }
+        let coord: Vec<_> = tail
+            .iter()
+            .filter(|t| {
+                matches!(
+                    t.reason,
+                    crate::agent::state::TransitionReason::CoordinatorModeActive
+                        | crate::agent::state::TransitionReason::CoordinatorWorkerSpawn
+                        | crate::agent::state::TransitionReason::CoordinatorWorkerComplete
+                )
+            })
+            .collect();
+        if !coord.is_empty() {
+            println!();
+            println!("  Coordinator-related transitions:");
+            for t in coord {
+                println!("    - {:?}: {:?}", t.reason, t.detail);
+            }
         }
     }
     Ok(())

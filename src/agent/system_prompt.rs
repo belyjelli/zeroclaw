@@ -6,8 +6,8 @@ use crate::config::{
     SkillsPromptInjectionMode,
 };
 use crate::context::DynamicContextPaths;
-use crate::providers::ChatMessage;
 use crate::identity;
+use crate::providers::ChatMessage;
 use crate::security::AutonomyLevel;
 use crate::skills::Skill;
 use anyhow::Result;
@@ -40,6 +40,30 @@ impl SystemPrompt {
             self.static_prefix, SYSTEM_PROMPT_DYNAMIC_BOUNDARY, self.dynamic_tail
         )
     }
+}
+
+/// Build worker chat history: frozen parent [`SystemPrompt::full`] as system, one user turn
+/// with parent summary, worker goal, and explicit callable tool names (hand coordinator path).
+#[must_use]
+pub fn build_forked_history(
+    parent: &SystemPrompt,
+    parent_turn_summary: &str,
+    worker_goal: &str,
+    worker_tool_names: &[String],
+) -> Vec<ChatMessage> {
+    let mut user = String::new();
+    user.push_str("## Parent context (read-only summary)\n\n");
+    user.push_str(parent_turn_summary);
+    user.push_str("\n\n## Your worker task\n\n");
+    user.push_str(worker_goal);
+    user.push_str("\n\n## Callable tools this turn\n\n");
+    if worker_tool_names.is_empty() {
+        user.push_str("(none — respond with text only.)");
+    } else {
+        user.push_str(&worker_tool_names.join(", "));
+        user.push_str("\n\nOnly invoke tools from this list.");
+    }
+    vec![ChatMessage::system(parent.full()), ChatMessage::user(user)]
 }
 
 /// Per-turn inputs for system prompt assembly.
@@ -215,10 +239,7 @@ fn fingerprint(ctx: &PromptAssemblyContext<'_>) -> MemoFingerprint {
         aieos_hash: aieos_fp(ctx.identity_config, ctx.workspace_dir),
         static_suffix_hash: hash_str(ctx.static_suffix),
         identity_tag: identity_cfg_tag(ctx.identity_config),
-        dispatcher_hash: ctx
-            .dispatcher_instructions
-            .map(hash_str)
-            .unwrap_or(0),
+        dispatcher_hash: ctx.dispatcher_instructions.map(hash_str).unwrap_or(0),
         security_hash: ctx.security_summary.map(hash_str).unwrap_or(0),
         include_channel_media: ctx.include_channel_media,
     }
@@ -622,7 +643,8 @@ fn render_static_body(ctx: &PromptAssemblyContext<'_>) -> Result<String> {
     if !ctx.compact_context {
         prompt.push_str("## Channel Capabilities\n\n");
         prompt.push_str("- You are running as a messaging bot. Your response is automatically sent back to the user's channel.\n");
-        prompt.push_str("- You do NOT need to ask permission to respond — just respond directly.\n");
+        prompt
+            .push_str("- You do NOT need to ask permission to respond — just respond directly.\n");
         prompt.push_str(match ctx.autonomy_config.map(|cfg| cfg.level) {
             Some(AutonomyLevel::Full) => {
                 "- If the runtime policy already allows a tool, use it directly; do not ask the user for extra approval.\n\
@@ -681,8 +703,11 @@ fn render_dynamic_tail(ctx: &PromptAssemblyContext<'_>) -> Result<String> {
 
     if let Some(dc) = ctx.dynamic_context {
         if dc.enabled {
-            match crate::context::format_dynamic_context_block(dc, ctx.workspace_dir, ctx.dynamic_paths)
-            {
+            match crate::context::format_dynamic_context_block(
+                dc,
+                ctx.workspace_dir,
+                ctx.dynamic_paths,
+            ) {
                 Ok(block) if !block.trim().is_empty() => {
                     prompt.push_str(&block);
                     prompt.push_str("\n\n");
@@ -805,5 +830,28 @@ mod tests {
         assert!(sp.dynamic_tail.contains("## Current Date & Time"));
         let full = sp.full();
         assert!(full.contains(SYSTEM_PROMPT_DYNAMIC_BOUNDARY));
+    }
+
+    #[test]
+    fn build_forked_history_preserves_system_and_user_sections() {
+        let sp = SystemPrompt {
+            static_prefix: "STATIC".into(),
+            dynamic_tail: "DYNAMIC".into(),
+        };
+        let hist = build_forked_history(
+            &sp,
+            "parent one-liner",
+            "worker goal text",
+            &["file_read".into(), "shell".into()],
+        );
+        assert_eq!(hist.len(), 2);
+        assert_eq!(hist[0].role, "system");
+        assert!(hist[0].content.contains("STATIC"));
+        assert!(hist[0].content.contains(SYSTEM_PROMPT_DYNAMIC_BOUNDARY));
+        assert_eq!(hist[1].role, "user");
+        assert!(hist[1].content.contains("parent one-liner"));
+        assert!(hist[1].content.contains("worker goal text"));
+        assert!(hist[1].content.contains("file_read"));
+        assert!(hist[1].content.contains("shell"));
     }
 }

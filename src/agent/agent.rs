@@ -391,6 +391,38 @@ impl Agent {
         self.memory_session_id = session_id;
     }
 
+    /// Provider reference (e.g. hand coordinator worker loops).
+    pub fn provider_ref(&self) -> &dyn Provider {
+        self.provider.as_ref()
+    }
+
+    /// Tool registry backing this agent.
+    pub fn tools_registry(&self) -> &[Box<dyn Tool>] {
+        &self.tools
+    }
+
+    pub fn observer(&self) -> Arc<dyn Observer> {
+        Arc::clone(&self.observer)
+    }
+
+    /// Configured model id for API calls.
+    pub fn model_name_str(&self) -> &str {
+        &self.model_name
+    }
+
+    pub fn provider_label_str(&self) -> &str {
+        &self.provider_label
+    }
+
+    pub fn temperature(&self) -> f64 {
+        self.temperature
+    }
+
+    /// Agent subsection of full config (pacing, offload, pruning, …).
+    pub fn agent_config(&self) -> &crate::config::AgentConfig {
+        &self.config
+    }
+
     fn append_session_transcript(&self, channel: &str, model: &str, text: &str) {
         crate::agent::session_transcript::append_assistant_for_config(
             &self.config.session_transcript,
