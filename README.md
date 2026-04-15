@@ -140,6 +140,8 @@ Upgrading? Run `zeroclaw doctor` after updating.
 
 ### From source (development)
 
+As of April 2026 the legacy standalone agent loop has been removed in favor of the QueryEngine-orchestrated path. After pulling the latest sources, run `cargo build` (or `cargo clean && cargo build` if incremental artifacts confuse the compiler).
+
 ```bash
 git clone https://github.com/zeroclaw-labs/zeroclaw.git
 cd zeroclaw

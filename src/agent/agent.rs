@@ -4,13 +4,13 @@ use crate::agent::dispatcher::{
 use crate::agent::memory_loader::{DefaultMemoryLoader, MemoryLoader};
 use crate::agent::prompt::{PromptContext, SystemPromptBuilder};
 use crate::config::Config;
+use crate::hooks::HookRunner;
 use crate::i18n::ToolDescriptions;
 use crate::memory::{self, Memory, MemoryCategory};
 use crate::observability::{self, Observer, ObserverEvent};
 use crate::providers::{self, ChatMessage, ChatRequest, ConversationMessage, Provider};
 use crate::runtime;
 use crate::security::SecurityPolicy;
-use crate::hooks::HookRunner;
 use crate::tools::{self, Tool, ToolSpec};
 use anyhow::Result;
 use chrono::{Datelike, Timelike};
@@ -615,7 +615,12 @@ impl Agent {
         self.history.extend(other_messages);
     }
 
-    async fn fire_post_turn_hooks(&self, channel: &str, user_message: &str, assistant_summary: &str) {
+    async fn fire_post_turn_hooks(
+        &self,
+        channel: &str,
+        user_message: &str,
+        assistant_summary: &str,
+    ) {
         if let Some(ref h) = self.hooks {
             crate::agent::stop_hooks::fire_after_turn_void(
                 h,
@@ -1097,9 +1102,7 @@ impl Agent {
                             got_stream = true;
                             streamed_text.push_str(&chunk.delta);
                             let _ = event_tx
-                                .send(TurnEventSink::Emit(TurnEvent::Chunk {
-                                    delta: chunk.delta,
-                                }))
+                                .send(TurnEventSink::Emit(TurnEvent::Chunk { delta: chunk.delta }))
                                 .await;
                         }
                     }

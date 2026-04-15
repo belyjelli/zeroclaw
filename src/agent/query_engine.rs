@@ -3,7 +3,7 @@
 //! This module is the canonical orchestration boundary (lesson 04-style): one turn runs inside
 //! [`run_query_loop`], which records transitions and runs post-turn stop hooks.
 
-use super::state::{EngineState, TurnTransition, TransitionReason};
+use super::state::{EngineState, TransitionReason, TurnTransition};
 use super::TurnEventSink;
 use crate::approval::ApprovalManager;
 use crate::hooks::{HookResult, HookRunner};
@@ -135,20 +135,12 @@ pub(crate) async fn run_query_loop(
     if let (Ok(text), Some(hooks)) = (&res, hooks) {
         let user = turn_user_message.unwrap_or("");
         super::stop_hooks::fire_after_turn_void(hooks, channel_name, user, text.as_str()).await;
-        match super::stop_hooks::run_after_turn_blocking(
-            hooks,
-            channel_name,
-            user,
-            text.as_str(),
-        )
-        .await
+        match super::stop_hooks::run_after_turn_blocking(hooks, channel_name, user, text.as_str())
+            .await
         {
             HookResult::Continue(()) => {}
             HookResult::Cancel(reason) => {
-                record_transition(
-                    TransitionReason::StopHookBlocking,
-                    Some(reason),
-                );
+                record_transition(TransitionReason::StopHookBlocking, Some(reason));
             }
         }
     }

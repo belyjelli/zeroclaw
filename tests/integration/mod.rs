@@ -2,6 +2,7 @@ mod agent;
 mod agent_robustness;
 mod channel_matrix;
 mod channel_routing;
+mod gateway_hooks;
 mod hooks;
 mod memory_comparison;
 mod memory_restart;

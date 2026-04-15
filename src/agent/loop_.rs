@@ -368,10 +368,7 @@ pub(crate) const PROGRESS_MIN_INTERVAL_MS: u64 = 500;
 /// Used before streaming the final answer so progress lines are replaced by the clean response.
 pub(crate) const DRAFT_CLEAR_SENTINEL: &str = "\x00CLEAR\x00";
 
-async fn send_turn_sink_str(
-    sink: &Option<tokio::sync::mpsc::Sender<TurnEventSink>>,
-    text: String,
-) {
+async fn send_turn_sink_str(sink: &Option<tokio::sync::mpsc::Sender<TurnEventSink>>, text: String) {
     if let Some(tx) = sink {
         let _ = tx.send(TurnEventSink::DeltaText(text)).await;
     }
@@ -2821,11 +2818,7 @@ pub(crate) async fn run_tool_call_loop_body(
             crate::agent::compaction_pipeline::CompactionTrigger::Routine,
         );
         ctx.log_context_signals = iteration > 0;
-        crate::agent::compaction_pipeline::run_pre_llm_phases(
-            history,
-            history_pruning,
-            &ctx,
-        )?;
+        crate::agent::compaction_pipeline::run_pre_llm_phases(history, history_pruning, &ctx)?;
 
         // Rebuild tool_specs each iteration so newly activated deferred tools appear.
         let mut tool_specs: Vec<crate::tools::ToolSpec> = tools_registry
@@ -3199,9 +3192,7 @@ pub(crate) async fn run_tool_call_loop_body(
                     }
                 }
                 if !chunk.is_empty() {
-                    let _ = tx
-                        .send(TurnEventSink::DeltaText(chunk))
-                        .await;
+                    let _ = tx.send(TurnEventSink::DeltaText(chunk)).await;
                 }
             }
             history.push(ChatMessage::assistant(response_text.clone()));
