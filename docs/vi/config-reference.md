@@ -377,6 +377,34 @@ Lưu ý:
 
 - Chèn ngữ cảnh memory bỏ qua khóa auto-save `assistant_resp*` kiểu cũ để tránh tóm tắt do model tạo bị coi là sự thật.
 
+## `[memory.layered]`
+
+**Bộ nhớ phân lớp** tùy chọn (AutoMemory + SessionMemory): file chủ đề được chọn lọc và bản tóm tắt theo phiên dưới `~/.zeroclaw/` (theo workspace), được chèn vào **đuôi động của system prompt** thay vì dán nguyên `MEMORY.md` trong workspace. Khi bật, khối tiền tố `[Memory context]` từ `Memory::recall` trên tin nhắn user bị bỏ để tránh trùng lặp.
+
+| Khóa | Mặc định | Mục đích |
+|---|---|---|
+| `enabled` | `false` | Bật/tắt bộ nhớ phân lớp |
+| `staleness_warn_days` | `7` | Chủ đề cũ hơn số ngày này sẽ có cảnh báo “lỗi thời” trong prompt |
+| `index_max_entries` | `200` | Số dòng chỉ mục `- [...](...)` tối đa giữ trong `~/.zeroclaw/memory/<bucket>/MEMORY.md` |
+| `max_topics_in_prompt` | `5` | Số nội dung chủ đề tối đa gộp vào khối phân lớp mỗi lần gọi LLM |
+| `max_chars_total` | `8000` | Giới hạn cứng kích thước markdown (ký tự) |
+
+Lưu ý:
+
+- **AutoMemory** nằm tại `~/.zeroclaw/memory/<bucket-workspace>/` (`MEMORY.md` + `topics/*.md`), tách khỏi `MEMORY.md` trong workspace mà backend `markdown` dùng.
+- **SessionMemory** (theo lượt): `~/.zeroclaw/sessions/<session-stem>/session-memory/<uuid>.md` (cùng họ quy tắc stem với bản ghi JSONL phiên).
+- Ghi file (session + chủ đề tùy chọn từ consolidation) chạy sau lượt khi `memory.auto_save = true` và consolidation chạy; có thể bật layered mà không bật `auto_save`, khi đó chỉ có bộ chọn đọc file có sẵn.
+- Xếp hạng chủ đề: trùng khóa; nếu cấu hình embedding của `[memory]` khác `none`, dùng lại `vector_weight` / `keyword_weight`.
+- Chẩn đoán: `zeroclaw doctor query-engine` in thống kê bộ chọn phân lớp gần nhất trong tiến trình.
+
+```toml
+[memory]
+auto_save = true
+
+[memory.layered]
+enabled = true
+```
+
 ## `[[model_routes]]` và `[[embedding_routes]]`
 
 Route hint giúp tên tích hợp ổn định khi model ID thay đổi.

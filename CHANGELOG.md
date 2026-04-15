@@ -10,3 +10,4 @@
 ### Improvements
 
 - The tool-call loop emits structured `TurnEvent` values (`ToolCall`, `ToolResult`) alongside draft progress strings so Web and channel consumers can share one ordering-preserving stream.
+- Optional **layered memory** (`[memory.layered]` in config): AutoMemory topic files + SessionMemory turn markdown under `~/.zeroclaw/`, selective injection into the system prompt dynamic tail, `zeroclaw doctor query-engine` stats, and filesystem writes piggybacking on the existing consolidation pass when `memory.auto_save` is on. Documented in `docs/reference/api/config-reference.md`.

@@ -548,6 +548,34 @@ Notes:
 
 - Memory context injection ignores legacy `assistant_resp*` auto-save keys to prevent old model-authored summaries from being treated as facts.
 
+## `[memory.layered]`
+
+Optional **layered memory** (AutoMemory + SessionMemory): curated topic files and per-session turn summaries under `~/.zeroclaw/` (scoped by workspace), injected into the **system prompt dynamic tail** instead of pasting the whole workspace `MEMORY.md`. When enabled, the `[Memory context]` user-prefix block from `Memory::recall` is skipped so memory is not duplicated.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `enabled` | `false` | Turn layered memory on or off |
+| `staleness_warn_days` | `7` | Topics older than this get an in-prompt staleness reminder |
+| `index_max_entries` | `200` | Max `- [...](...)` index lines kept in `~/.zeroclaw/memory/<bucket>/MEMORY.md` |
+| `max_topics_in_prompt` | `5` | Max topic bodies merged into the layered block per LLM call |
+| `max_chars_total` | `8000` | Hard cap on layered markdown size (characters) |
+
+Notes:
+
+- **AutoMemory** lives at `~/.zeroclaw/memory/<workspace-bucket>/` (`MEMORY.md` index + `topics/*.md`). This is separate from workspace `MEMORY.md` used by the `markdown` memory backend.
+- **SessionMemory** turn files: `~/.zeroclaw/sessions/<session-stem>/session-memory/<uuid>.md` (same session stem family as JSONL transcripts).
+- **Writes** (session file + optional topic rows from consolidation) run after a turn when `memory.auto_save = true` and consolidation runs; layered injection can be enabled without `auto_save`, but then only the selector reads existing files.
+- Topic ranking uses keyword overlap and, when `[memory]` embedding settings are non-`none`, the same hybrid weights as `vector_weight` / `keyword_weight`.
+- Diagnostics: `zeroclaw doctor query-engine` prints the last in-process layered selector stats (topics picked, session injected, staleness warnings).
+
+```toml
+[memory]
+auto_save = true
+
+[memory.layered]
+enabled = true
+```
+
 ## `[[model_routes]]` and `[[embedding_routes]]`
 
 Use route hints so integrations can keep stable names while model IDs evolve.

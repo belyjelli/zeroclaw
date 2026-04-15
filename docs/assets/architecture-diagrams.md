@@ -630,7 +630,7 @@ flowchart TB
     Complete --> Model[default_model,<br/>default_temperature]
     Complete --> Gateway[gateway config<br/>port, host, pairing]
     Complete --> Channels[channels_config<br/>telegram, discord, etc.]
-    Complete --> Memory[memory config<br/>backend, auto_save]
+    Complete --> Memory[memory config<br/>backend, auto_save,<br/>optional layered]
     Complete --> Security[autonomy config<br/>level, allowed_commands]
     Complete --> Reliability[reliability config<br/>timeouts, retries]
     Complete --> Observability[observability<br/>backend, metrics]

@@ -280,6 +280,8 @@ Only load these when you need precise details beyond what's in this file — for
 
 **Memory not persisting** — Check `[memory]` config. If `backend = "none"`, nothing is stored. Switch to `"sqlite"` or `"markdown"`. Also verify `auto_save = true`.
 
+**Layered memory (`[memory.layered]`)** — When `enabled = true`, curated facts and session summaries live under `~/.zeroclaw/memory/<workspace-bucket>/` and `~/.zeroclaw/sessions/.../session-memory/` (see `docs/reference/api/config-reference.md`). The model sees a short block in the system prompt instead of the full workspace `MEMORY.md`. For post-turn **writes** (session files + topic updates from consolidation), keep `memory.auto_save = true`. Inspect behavior with `zeroclaw doctor query-engine` (layered selector stats).
+
 **Channel not responding** — Run `zeroclaw channels doctor` for the specific channel. Common issues: expired bot token, wrong allowed_users list, channel not enabled in `[channels]`.
 
 Report errors to the user with context appropriate to their expertise level. For beginners, explain what went wrong and suggest the fix. For experts, just show the error and the fix.

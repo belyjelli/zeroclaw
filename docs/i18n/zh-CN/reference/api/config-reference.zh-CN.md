@@ -451,6 +451,34 @@ allowed_roots = [\"~/Desktop/projects\", \"/opt/shared-repo\"]
 
 - 内存上下文注入忽略旧的 `assistant_resp*` 自动保存键，以防止旧模型生成的摘要被视为事实。
 
+## `[memory.layered]`
+
+可选的**分层记忆**（AutoMemory + SessionMemory）：在 `~/.zeroclaw/` 下按工作区隔离的精选主题文件与会话回合摘要，注入到**系统提示动态尾部**，而不是整份粘贴工作区 `MEMORY.md`。启用后，会跳过用户消息前缀中的 `[Memory context]`（`Memory::recall`），避免重复注入。
+
+| 键 | 默认值 | 用途 |
+|---|---|---|
+| `enabled` | `false` | 开关分层记忆 |
+| `staleness_warn_days` | `7` | 超过该天数的主题在提示中附带“陈旧”提醒 |
+| `index_max_entries` | `200` | `~/.zeroclaw/memory/<bucket>/MEMORY.md` 中保留的 `- [...](...)` 索引行上限 |
+| `max_topics_in_prompt` | `5` | 每次 LLM 调用合并进分层块的主题正文数量上限 |
+| `max_chars_total` | `8000` | 分层 Markdown 块字符数硬上限 |
+
+注意事项：
+
+- **AutoMemory** 位于 `~/.zeroclaw/memory/<工作区桶>/`（`MEMORY.md` 索引 + `topics/*.md`），与 `markdown` 后端使用的工作区 `MEMORY.md` 相互独立。
+- **SessionMemory** 回合文件：`~/.zeroclaw/sessions/<会话 stem>/session-memory/<uuid>.md`（与会话 JSONL 转录使用相同的 stem 规则族）。
+- 当 `memory.auto_save = true` 且合并（consolidation）运行时，会在回合后写入会话文件并可选更新主题；仅启用分层而不启用 `auto_save` 时，选择器只读取已有文件。
+- 主题排序使用关键词重叠；当 `[memory]` 嵌入配置非 `none` 时，复用 `vector_weight` / `keyword_weight` 的混合权重。
+- 诊断：`zeroclaw doctor query-engine` 会打印进程内最近一次分层选择器统计（选中主题数、是否注入会话摘要、陈旧警告数）。
+
+```toml
+[memory]
+auto_save = true
+
+[memory.layered]
+enabled = true
+```
+
 ## `[[model_routes]]` 和 `[[embedding_routes]]`
 
 使用路由提示，以便集成可以在模型 ID 演变时保持稳定的名称。
