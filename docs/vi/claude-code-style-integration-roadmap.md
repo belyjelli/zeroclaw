@@ -195,7 +195,7 @@ Một contributor cấp cao, tập trung; có thể song song (ví dụ spike gi
 ## Tài liệu liên quan
 
 - [Lộ trình cải thiện bảo mật](security-roadmap.md)
-- [Change playbooks](../contributing/change-playbooks.md)
+- [Sổ tay thay đổi](contributing/change-playbooks.md)
 - [Docs contract](../contributing/docs-contract.md)
 
 ## Bản ngôn ngữ khác
