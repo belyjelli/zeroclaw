@@ -288,6 +288,7 @@ pub async fn handle_api_cron_add(
     // Determine job type: explicit field, or infer "agent" when prompt is provided.
     let is_agent =
         matches!(job_type.as_deref(), Some("agent")) || (job_type.is_none() && prompt.is_some());
+    let is_hand = matches!(job_type.as_deref(), Some("hand"));
 
     let result = if is_agent {
         let prompt = match prompt.as_deref() {
@@ -320,6 +321,19 @@ pub async fn handle_api_cron_add(
             delete_after_run,
             allowed_tools,
         )
+    } else if is_hand {
+        let hand_name = match command.as_deref() {
+            Some(c) if !c.trim().is_empty() => c.trim(),
+            _ => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": "Missing 'command' for hand job (hand TOML stem)"})),
+                )
+                    .into_response();
+            }
+        };
+
+        crate::cron::add_hand_job(&config, name, schedule, hand_name, delivery)
     } else {
         let command = match command.as_deref() {
             Some(c) if !c.trim().is_empty() => c,
@@ -429,8 +443,8 @@ pub async fn handle_api_cron_patch(
                 .into_response();
         }
     };
-    let is_agent = matches!(existing.job_type, crate::cron::JobType::Agent);
-    let (patch_command, patch_prompt) = if is_agent {
+    let uses_prompt_field = matches!(existing.job_type, crate::cron::JobType::Agent);
+    let (patch_command, patch_prompt) = if uses_prompt_field {
         (None, body.command.or(body.prompt))
     } else {
         (body.command.or(body.prompt), None)

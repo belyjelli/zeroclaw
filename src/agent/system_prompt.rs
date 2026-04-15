@@ -854,4 +854,18 @@ mod tests {
         assert!(hist[1].content.contains("file_read"));
         assert!(hist[1].content.contains("shell"));
     }
+
+    #[test]
+    fn build_forked_history_includes_scratchpad_style_summary() {
+        let sp = SystemPrompt::default();
+        let summary = "Hand: h\n\n## Scratchpad (on disk";
+        let hist = build_forked_history(
+            &sp,
+            summary,
+            "Read prior files with file_read.",
+            &["file_read".into()],
+        );
+        assert!(hist[1].content.contains("Scratchpad"));
+        assert!(hist[1].content.contains("file_read"));
+    }
 }

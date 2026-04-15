@@ -263,6 +263,9 @@ pub struct WorkerForkOutcome {
 
 /// Run a short-lived worker with the same provider as the parent agent, excluding every
 /// tool not permitted for this worker and not in the hand allowlist (via loop exclusions).
+///
+/// `system_prompt` is the full system message for this worker (typically worker-scoped assembly
+/// for coordinator phases, or the full hand assembly for single-turn `Disabled` mode).
 #[allow(clippy::too_many_arguments)]
 pub async fn run_worker_fork(
     cfg: &crate::config::Config,
@@ -270,7 +273,7 @@ pub async fn run_worker_fork(
     provider_name: &str,
     model: &str,
     temperature: f64,
-    parent_system: &super::system_prompt::SystemPrompt,
+    system_prompt: &super::system_prompt::SystemPrompt,
     parent_summary: &str,
     worker_goal: &str,
     worker_tool_names: &[String],
@@ -321,7 +324,7 @@ pub async fn run_worker_fork(
     )));
 
     let mut history = super::system_prompt::build_forked_history(
-        parent_system,
+        system_prompt,
         parent_summary,
         worker_goal,
         worker_tool_names,

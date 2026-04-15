@@ -33,6 +33,9 @@ pub enum JobType {
     #[default]
     Shell,
     Agent,
+    /// Run a hand from `~/.zeroclaw/hands/{command}.toml` via [`crate::hands::run_coordinator_hand`].
+    /// `CronJob.command` must be the hand name (stem, without `.toml`).
+    Hand,
 }
 
 impl From<JobType> for &'static str {
@@ -40,6 +43,7 @@ impl From<JobType> for &'static str {
         match value {
             JobType::Shell => "shell",
             JobType::Agent => "agent",
+            JobType::Hand => "hand",
         }
     }
 }
@@ -51,8 +55,9 @@ impl TryFrom<&str> for JobType {
         match value.to_lowercase().as_str() {
             "shell" => Ok(JobType::Shell),
             "agent" => Ok(JobType::Agent),
+            "hand" => Ok(JobType::Hand),
             _ => Err(format!(
-                "Invalid job type '{}'. Expected one of: 'shell', 'agent'",
+                "Invalid job type '{}'. Expected one of: 'shell', 'agent', 'hand'",
                 value
             )),
         }
@@ -234,6 +239,8 @@ mod tests {
         assert_eq!(JobType::try_from("SHELL").unwrap(), JobType::Shell);
         assert_eq!(JobType::try_from("agent").unwrap(), JobType::Agent);
         assert_eq!(JobType::try_from("AgEnT").unwrap(), JobType::Agent);
+        assert_eq!(JobType::try_from("hand").unwrap(), JobType::Hand);
+        assert_eq!(JobType::try_from("HAND").unwrap(), JobType::Hand);
     }
 
     #[test]

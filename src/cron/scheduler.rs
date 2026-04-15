@@ -126,6 +126,7 @@ async fn execute_job_with_retry(
         let (success, output) = match job.job_type {
             JobType::Shell => run_job_command(config, security, job).await,
             JobType::Agent => Box::pin(run_agent_job(config, security, job)).await,
+            JobType::Hand => Box::pin(run_hand_job(config, security, job)).await,
         };
         last_output = output;
 
@@ -204,6 +205,66 @@ async fn execute_and_persist_job(
     .await;
 
     (job.id.clone(), success, output)
+}
+
+async fn run_hand_job(config: &Config, security: &SecurityPolicy, job: &CronJob) -> (bool, String) {
+    if !security.can_act() {
+        return (
+            false,
+            "blocked by security policy: autonomy is read-only".to_string(),
+        );
+    }
+
+    if security.is_rate_limited() {
+        return (
+            false,
+            "blocked by security policy: rate limit exceeded".to_string(),
+        );
+    }
+
+    if !security.record_action() {
+        return (
+            false,
+            "blocked by security policy: action budget exhausted".to_string(),
+        );
+    }
+
+    let hand_name = job.command.trim();
+    if hand_name.is_empty() {
+        return (
+            false,
+            "hand cron job has empty command (expected hand name)".to_string(),
+        );
+    }
+
+    let Some(zdir) = crate::context::default_user_zeroclaw_dir() else {
+        return (
+            false,
+            "HOME / ~/.zeroclaw not available for hands".to_string(),
+        );
+    };
+    let hands_dir = zdir.join("hands");
+
+    let hand = match crate::hands::load_hand(&hands_dir, hand_name) {
+        Ok(h) => h,
+        Err(e) => {
+            return (
+                false,
+                format!("failed to load hand `{hand_name}`: {e}"),
+            );
+        }
+    };
+
+    match crate::hands::run_coordinator_hand(config, &hands_dir, &hand).await {
+        Ok(msg) => {
+            if msg.trim().is_empty() {
+                (true, "hand job completed".to_string())
+            } else {
+                (true, msg)
+            }
+        }
+        Err(e) => (false, format!("hand job failed: {e}")),
+    }
 }
 
 async fn run_agent_job(
@@ -337,7 +398,7 @@ fn is_one_shot_auto_delete(job: &CronJob) -> bool {
 }
 
 fn warn_if_high_frequency_agent_job(job: &CronJob) {
-    if !matches!(job.job_type, JobType::Agent) {
+    if !matches!(job.job_type, JobType::Agent | JobType::Hand) {
         return;
     }
     let too_frequent = match &job.schedule {
@@ -357,7 +418,8 @@ fn warn_if_high_frequency_agent_job(job: &CronJob) {
 
     if too_frequent {
         tracing::warn!(
-            "Cron agent job '{}' is scheduled more frequently than every 5 minutes",
+            "Cron {:?} job '{}' is scheduled more frequently than every 5 minutes",
+            job.job_type,
             job.id
         );
     }

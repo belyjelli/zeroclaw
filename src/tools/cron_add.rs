@@ -110,12 +110,12 @@ impl Tool for CronAddTool {
                 },
                 "job_type": {
                     "type": "string",
-                    "enum": ["shell", "agent"],
-                    "description": "Type of job: 'shell' runs a command, 'agent' runs the AI agent with a prompt"
+                    "enum": ["shell", "agent", "hand"],
+                    "description": "Type of job: 'shell' runs a command, 'agent' runs the AI agent with a prompt, 'hand' runs a hand from ~/.zeroclaw/hands/{command}.toml"
                 },
                 "command": {
                     "type": "string",
-                    "description": "Shell command to run (required when job_type is 'shell')"
+                    "description": "Shell command (job_type 'shell') or hand name without .toml (job_type 'hand')"
                 },
                 "prompt": {
                     "type": "string",
@@ -210,6 +210,7 @@ impl Tool for CronAddTool {
         let job_type = match args.get("job_type").and_then(serde_json::Value::as_str) {
             Some("agent") => JobType::Agent,
             Some("shell") => JobType::Shell,
+            Some("hand") => JobType::Hand,
             Some(other) => {
                 return Ok(ToolResult {
                     success: false,
@@ -348,6 +349,27 @@ impl Tool for CronAddTool {
                     delete_after_run,
                     allowed_tools,
                 )
+            }
+            JobType::Hand => {
+                let hand_name = match args.get("command").and_then(serde_json::Value::as_str) {
+                    Some(h) if !h.trim().is_empty() => h.trim(),
+                    _ => {
+                        return Ok(ToolResult {
+                            success: false,
+                            output: String::new(),
+                            error: Some(
+                                "Missing 'command' for hand job (hand TOML stem, e.g. my-hand)"
+                                    .to_string(),
+                            ),
+                        });
+                    }
+                };
+
+                if let Some(blocked) = self.enforce_mutation_allowed("cron_add") {
+                    return Ok(blocked);
+                }
+
+                cron::add_hand_job(&self.config, name, schedule, hand_name, delivery)
             }
         };
 

@@ -5860,12 +5860,12 @@ pub struct CronJobDecl {
     /// Human-readable name.
     #[serde(default)]
     pub name: Option<String>,
-    /// Job type: `"shell"` (default) or `"agent"`.
+    /// Job type: `"shell"` (default), `"agent"`, or `"hand"`.
     #[serde(default = "default_job_type_decl")]
     pub job_type: String,
     /// Schedule for the job.
     pub schedule: CronScheduleDecl,
-    /// Shell command to run (required when `job_type = "shell"`).
+    /// Shell command to run (required when `job_type = "shell"`), or hand name when `job_type = "hand"`.
     #[serde(default)]
     pub command: Option<String>,
     /// Agent prompt (required when `job_type = "agent"`).

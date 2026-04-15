@@ -43,6 +43,62 @@ fn truncate(s: &str, max: usize) -> String {
     format!("{}… [truncated]", &s[..end])
 }
 
+/// Scratchpad-first handoff: no inlined prior worker bodies (they live under `scratchpad/`).
+fn scratchpad_parent_summary(
+    hand: &Hand,
+    scratchpad: &Path,
+    ctx: &HandContext,
+    completed_rel_paths: &[&str],
+) -> String {
+    let sp = scratchpad.display().to_string();
+    let mut s = format!(
+        "Hand: {}\nDescription: {}\nMission: {}\n\n## Scratchpad (on disk — use `file_read` on these paths; prior phase outputs are not pasted here)\n\nDirectory: `{sp}`\n",
+        hand.name, hand.description, hand.prompt
+    );
+    for rel in completed_rel_paths {
+        let p = scratchpad.join(rel);
+        if p.exists() {
+            if let Ok(meta) = std::fs::metadata(&p) {
+                let _ = writeln!(
+                    &mut s,
+                    "- `{}/{}` ({} bytes)",
+                    sp,
+                    rel,
+                    meta.len()
+                );
+            } else {
+                let _ = writeln!(&mut s, "- `{sp}/{rel}`");
+            }
+        }
+    }
+    s.push_str("\n## Rolling context (compact)\n\n");
+    s.push_str(&truncate(&context_digest(ctx), 1200));
+    s
+}
+
+/// `STATUS: PASS` / `STATUS: FAIL` (case-insensitive); last matching line in the text wins.
+fn line_verification_status(line: &str) -> Option<bool> {
+    let t = line.trim();
+    let (head, tail) = t.split_once(':')?;
+    if !head.trim().eq_ignore_ascii_case("STATUS") {
+        return None;
+    }
+    match tail.trim().to_ascii_uppercase().as_str() {
+        "PASS" => Some(true),
+        "FAIL" => Some(false),
+        _ => None,
+    }
+}
+
+fn scan_verification_status(text: &str) -> Option<bool> {
+    for line in text.lines().rev() {
+        if let Some(v) = line_verification_status(line) {
+            return Some(v);
+        }
+    }
+    None
+}
+
 /// Default tool candidates per coordinator phase (intersected with the hand allowlist and registry).
 fn phase_default_tool_names(phase: &str) -> &'static [&'static str] {
     match phase {
@@ -107,7 +163,13 @@ fn all_hand_tool_names(hand: &Hand, registry: &[Box<dyn crate::tools::Tool>]) ->
         .collect()
 }
 
-fn assemble_parent_prompt(config: &Config, agent: &Agent, hand: &Hand) -> Result<SystemPrompt> {
+/// Assemble system prompt for a hand, optionally restricted to a subset of tool names (worker phase).
+fn assemble_hand_system_prompt(
+    config: &Config,
+    agent: &Agent,
+    hand: &Hand,
+    only_tool_names: Option<&[String]>,
+) -> Result<SystemPrompt> {
     let security = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
     let security_summary = security.prompt_summary();
     let skills = crate::skills::load_skills_with_config(&config.workspace_dir, config);
@@ -118,10 +180,14 @@ fn assemble_parent_prompt(config: &Config, agent: &Agent, hand: &Hand) -> Result
         session_dir: None,
     };
 
+    let filter: Option<HashSet<&str>> =
+        only_tool_names.map(|names| names.iter().map(String::as_str).collect());
+
     let owned_descriptions: Vec<(String, String)> = agent
         .tools_registry()
         .iter()
         .filter(|t| tool_ok_for_hand(hand_allow_slice(hand), t.name()))
+        .filter(|t| filter.as_ref().is_none_or(|set| set.contains(t.name())))
         .map(|t| (t.name().to_string(), t.description().to_string()))
         .collect();
     let pair_refs: Vec<(&str, &str)> = owned_descriptions
@@ -211,7 +277,7 @@ fn worker_goal_for_phase(
     let digest = context_digest(ctx);
     match phase {
         "research" => format!(
-            "Hand `{}` — research phase.\n\n## Mission\n{}\n\n## Knowledge lines\n{}\n\n## Rolling context\n{digest}\n\nWrite durable notes to `{sp}/{rel}` (the coordinator will persist your final reply there too).",
+            "Hand `{}` — research phase.\n\n## Mission\n{}\n\n## Knowledge lines\n{}\n\n## Rolling context\n{digest}\n\nUse `file_read` only if needed. Write durable notes to `{sp}/{rel}` (the coordinator persists your final reply there too).",
             hand.name,
             hand.prompt,
             hand.knowledge.join("\n"),
@@ -220,21 +286,21 @@ fn worker_goal_for_phase(
             rel = rel,
         ),
         "synthesis" => format!(
-            "Synthesis phase for hand `{}`. Read `{sp}/research.md` if it exists. Produce a consolidated plan in `{sp}/{rel}`.\n\n{digest}",
+            "Synthesis phase for hand `{}`. Read `{sp}/research.md` with `file_read` before writing. Produce a consolidated plan in `{sp}/{rel}`.\n\n{digest}",
             hand.name,
             sp = sp,
             rel = rel,
             digest = digest
         ),
         "implementation" => format!(
-            "Implementation phase for hand `{}`. Read `{sp}/synthesis.md` and prior notes. Execute concrete steps; document results for `{sp}/{rel}`.\n\n{digest}",
+            "Implementation phase for hand `{}`. Read `{sp}/synthesis.md` (and other scratchpad files as needed) with `file_read`. Execute concrete steps; document results in `{sp}/{rel}`.\n\n{digest}",
             hand.name,
             sp = sp,
             rel = rel,
             digest = digest
         ),
         "verification" => format!(
-            "Verification phase for hand `{}`. Read `{sp}/implementation.md` and related files under `{sp}`. Report pass/fail and risks in `{sp}/{rel}`.\n\n{digest}",
+            "Verification phase for hand `{}`. Read `{sp}/implementation.md` and related files under `{sp}`. Report pass/fail and risks in `{sp}/{rel}`.\n\nInclude a single final line exactly: `STATUS: PASS` or `STATUS: FAIL`.\n\n{digest}",
             hand.name,
             sp = sp,
             rel = rel,
@@ -262,8 +328,6 @@ pub async fn run_coordinator_hand(
 
     let agent = Agent::from_config(config).await?;
 
-    let parent_sp = assemble_parent_prompt(config, &agent, hand)?;
-
     let model = hand
         .model
         .as_deref()
@@ -272,6 +336,7 @@ pub async fn run_coordinator_hand(
     let obs = agent.observer();
 
     if matches!(hand.coordinator_mode, CoordinatorMode::Disabled) {
+        let parent_sp = assemble_hand_system_prompt(config, &agent, hand, None)?;
         query_engine::record_transition(
             crate::agent::state::TransitionReason::CoordinatorModeActive,
             Some(format!("hand={} mode=disabled single_turn", hand.name)),
@@ -306,7 +371,7 @@ pub async fn run_coordinator_hand(
         .await?;
         append_decision(
             &scratchpad,
-            &format!("single_turn completed; chars={}", out.final_text.len()),
+            &format!("single_turn ok chars={}", out.final_text.len()),
         )?;
         return Ok(out.final_text);
     }
@@ -333,11 +398,7 @@ pub async fn run_coordinator_hand(
     }
     let last_rel = phases.last().map(|p| p.1).unwrap_or("verification.md");
 
-    let mut parent_summary = format!(
-        "Hand: {}\nDescription: {}\nMission: {}",
-        hand.name, hand.description, hand.prompt
-    );
-
+    let mut completed_rels: Vec<&'static str> = Vec::new();
     let mut last_out = String::new();
 
     for (phase, rel) in &phases {
@@ -348,19 +409,22 @@ pub async fn run_coordinator_hand(
                 phase
             );
         }
+        let worker_sp = assemble_hand_system_prompt(config, &agent, hand, Some(&tool_names))?;
+        let parent_summary =
+            scratchpad_parent_summary(hand, &scratchpad, &hand_ctx, &completed_rels);
         let goal = worker_goal_for_phase(*phase, rel, hand, &scratchpad, &hand_ctx);
         let max_it = (24usize).min(config.agent.max_tool_iterations.max(1));
 
         let spec_line = format!("phase={} tools={}", phase, tool_names.join(","));
         append_decision(&scratchpad, &spec_line)?;
 
-        let out = query_engine::run_worker_fork(
+        let out = match query_engine::run_worker_fork(
             config,
             agent.provider_ref(),
             provider_name,
             model,
             agent.temperature(),
-            &parent_sp,
+            &worker_sp,
             &parent_summary,
             &goal,
             &tool_names,
@@ -371,17 +435,65 @@ pub async fn run_coordinator_hand(
             *phase,
             max_it,
         )
-        .await?;
+        .await
+        {
+            Ok(o) => o,
+            Err(e) => {
+                append_decision(
+                    &scratchpad,
+                    &format!("phase={phase} ERROR pipeline_halt err={e}"),
+                )?;
+                query_engine::set_last_coordinator_summary(Some(format!(
+                    "Coordinator: halted at `{phase}` for hand `{}`: {e}",
+                    hand.name
+                )));
+                return Err(e);
+            }
+        };
+
+        append_decision(
+            &scratchpad,
+            &format!(
+                "phase={phase} ok chars={} empty={}",
+                out.final_text.len(),
+                out.final_text.trim().is_empty()
+            ),
+        )?;
+
+        if *phase == "research" && out.final_text.trim().is_empty() {
+            append_decision(
+                &scratchpad,
+                "gate research_empty pipeline_halt",
+            )?;
+            bail!("research phase produced empty output; see scratchpad/decisions.md");
+        }
+
+        if *phase == "verification" {
+            match scan_verification_status(&out.final_text) {
+                Some(false) => {
+                    append_decision(
+                        &scratchpad,
+                        "gate verification STATUS:FAIL pipeline_halt",
+                    )?;
+                    bail!("verification phase reported STATUS: FAIL; see scratchpad/decisions.md");
+                }
+                None => {
+                    append_decision(
+                        &scratchpad,
+                        "gate verification missing STATUS line (expected STATUS: PASS or STATUS: FAIL)",
+                    )?;
+                }
+                Some(true) => {
+                    append_decision(&scratchpad, "gate verification STATUS:PASS")?;
+                }
+            }
+        }
 
         let path = scratchpad.join(rel);
         std::fs::write(&path, &out.final_text)
             .with_context(|| format!("failed to write {}", path.display()))?;
 
-        let _ = write!(
-            &mut parent_summary,
-            "\n\n## Worker {phase}\n{}",
-            truncate(&out.final_text, 6000)
-        );
+        completed_rels.push(rel);
         last_out = out.final_text;
     }
 
@@ -402,4 +514,56 @@ pub async fn run_coordinator_hand(
         scratchpad.join(last_rel).display(),
         summary_path.display()
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scan_verification_status_pass() {
+        let t = "Checks ok.\nSTATUS: PASS\n";
+        assert_eq!(scan_verification_status(t), Some(true));
+    }
+
+    #[test]
+    fn scan_verification_status_fail() {
+        let t = "Broken.\nstatus: FAIL\n";
+        assert_eq!(scan_verification_status(t), Some(false));
+    }
+
+    #[test]
+    fn scan_verification_status_none() {
+        assert_eq!(scan_verification_status("no status here"), None);
+    }
+
+    #[test]
+    fn scan_verification_status_ignores_notfail_substring() {
+        assert_eq!(scan_verification_status("NOTFAIL is not a status line\n"), None);
+    }
+
+    #[test]
+    fn scratchpad_parent_summary_lists_completed_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sp = tmp.path().join("scratch");
+        std::fs::create_dir_all(&sp).unwrap();
+        std::fs::write(sp.join("research.md"), "x").unwrap();
+        let hand = Hand {
+            name: "h1".into(),
+            description: "d".into(),
+            schedule: crate::cron::Schedule::Every { every_ms: 60_000 },
+            prompt: "do".into(),
+            knowledge: vec![],
+            allowed_tools: None,
+            model: None,
+            active: true,
+            max_history: 10,
+            coordinator_mode: CoordinatorMode::Enabled,
+        };
+        let ctx = HandContext::new("h1");
+        let s = scratchpad_parent_summary(&hand, &sp, &ctx, &["research.md"]);
+        assert!(s.contains("Hand: h1"));
+        assert!(s.contains("research.md"));
+        assert!(s.contains("bytes"));
+    }
 }

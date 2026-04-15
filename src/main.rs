@@ -87,6 +87,7 @@ mod cron;
 mod daemon;
 mod doctor;
 mod gateway;
+mod hands;
 mod hardware;
 mod health;
 mod heartbeat;

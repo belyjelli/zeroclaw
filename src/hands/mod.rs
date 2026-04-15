@@ -2,6 +2,8 @@ pub mod coordinator;
 pub mod types;
 
 pub use coordinator::run_coordinator_hand;
+// Re-exports for library consumers; the CLI binary compiles this module without using every type.
+#[allow(unused_imports)]
 pub use types::{CoordinatorMode, Hand, HandContext, HandRun, HandRunStatus, WorkerSpec};
 
 use anyhow::{Context, Result};
@@ -37,6 +39,14 @@ pub fn load_hands(hands_dir: &Path) -> Result<Vec<Hand>> {
     }
 
     Ok(hands)
+}
+
+/// Load a single hand definition from `{hands_dir}/{name}.toml`.
+pub fn load_hand(hands_dir: &Path, name: &str) -> Result<Hand> {
+    let path = hands_dir.join(format!("{name}.toml"));
+    let content = std::fs::read_to_string(&path)
+        .with_context(|| format!("failed to read hand file: {}", path.display()))?;
+    toml::from_str(&content).with_context(|| format!("failed to parse hand file: {}", path.display()))
 }
 
 /// Load the rolling context for a hand.

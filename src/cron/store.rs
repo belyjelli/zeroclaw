@@ -119,6 +119,56 @@ pub fn add_agent_job(
     get_job(config, &id)
 }
 
+/// Schedule a hand run (`command` = hand name, stem of `~/.zeroclaw/hands/{name}.toml`).
+pub fn add_hand_job(
+    config: &Config,
+    name: Option<String>,
+    schedule: Schedule,
+    hand_name: &str,
+    delivery: Option<DeliveryConfig>,
+) -> Result<CronJob> {
+    let hand_name = hand_name.trim();
+    if hand_name.is_empty() {
+        anyhow::bail!("hand cron job requires a non-empty hand name (command field)");
+    }
+    let now = Utc::now();
+    validate_schedule(&schedule, now)?;
+    validate_delivery_config(delivery.as_ref())?;
+    let next_run = next_run_for_schedule(&schedule, now)?;
+    let id = Uuid::new_v4().to_string();
+    let expression = schedule_cron_expression(&schedule).unwrap_or_default();
+    let schedule_json = serde_json::to_string(&schedule)?;
+    let delivery = delivery.unwrap_or_default();
+
+    with_connection(config, |conn| {
+        conn.execute(
+            "INSERT INTO cron_jobs (
+                id, expression, command, schedule, job_type, prompt, name, session_target, model,
+                enabled, delivery, delete_after_run, created_at, next_run
+             ) VALUES (?1, ?2, ?3, ?4, 'hand', NULL, ?5, 'isolated', NULL, 1, ?6, ?7, ?8, ?9)",
+            params![
+                id,
+                expression,
+                hand_name,
+                schedule_json,
+                name,
+                serde_json::to_string(&delivery)?,
+                if matches!(schedule, Schedule::At { .. }) {
+                    1
+                } else {
+                    0
+                },
+                now.to_rfc3339(),
+                next_run.to_rfc3339(),
+            ],
+        )
+        .context("Failed to insert cron hand job")?;
+        Ok(())
+    })?;
+
+    get_job(config, &id)
+}
+
 pub fn list_jobs(config: &Config) -> Result<Vec<CronJob>> {
     with_connection(config, |conn| {
         let mut stmt = conn.prepare(
@@ -800,9 +850,21 @@ fn validate_decl(decl: &crate::config::schema::CronJobDecl) -> Result<()> {
                 );
             }
         }
+        "hand" => {
+            if decl
+                .command
+                .as_deref()
+                .map_or(true, |c| c.trim().is_empty())
+            {
+                anyhow::bail!(
+                    "Declarative cron job '{}': hand job requires a non-empty 'command' (hand name)",
+                    decl.id
+                );
+            }
+        }
         other => {
             anyhow::bail!(
-                "Declarative cron job '{}': invalid job_type '{}', expected 'shell' or 'agent'",
+                "Declarative cron job '{}': invalid job_type '{}', expected 'shell', 'agent', or 'hand'",
                 decl.id,
                 other
             );
@@ -1280,6 +1342,54 @@ mod tests {
 
         let job = get_job(&config, "job-type-valid").unwrap();
         assert_eq!(job.job_type, JobType::Agent);
+    }
+
+    #[test]
+    fn job_type_from_sql_reads_hand_value() {
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp);
+        let now = Utc::now();
+
+        with_connection(&config, |conn| {
+            conn.execute(
+                "INSERT INTO cron_jobs (id, expression, command, schedule, job_type, created_at, next_run)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    "job-type-hand",
+                    "*/5 * * * *",
+                    "my-hand",
+                    Option::<String>::None,
+                    "hand",
+                    now.to_rfc3339(),
+                    (now + ChronoDuration::minutes(5)).to_rfc3339(),
+                ],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        let job = get_job(&config, "job-type-hand").unwrap();
+        assert_eq!(job.job_type, JobType::Hand);
+        assert_eq!(job.command, "my-hand");
+    }
+
+    #[test]
+    fn add_hand_job_persists() {
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp);
+        let job = add_hand_job(
+            &config,
+            None,
+            Schedule::Cron {
+                expr: "0 9 * * *".into(),
+                tz: None,
+            },
+            "nightly-scan",
+            None,
+        )
+        .unwrap();
+        assert_eq!(job.job_type, JobType::Hand);
+        assert_eq!(job.command, "nightly-scan");
     }
 
     #[test]
