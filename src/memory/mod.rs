@@ -11,8 +11,18 @@ pub mod importance;
 pub mod knowledge_graph;
 #[cfg(feature = "memory-postgres")]
 pub mod knowledge_graph_pg;
+pub mod auto_memory;
+pub mod layered_context;
+pub mod layered_paths;
+pub mod layered_selector;
+
+pub use layered_context::{
+    install_pending_layered_turn, peek_pending_layered_turn, LayeredTurnContext,
+};
+pub use layered_selector::{LayeredMemorySelectionResult, MemoryLayer};
 pub mod lucid;
 pub mod markdown;
+pub mod session_memory;
 pub mod none;
 pub mod policy;
 #[cfg(feature = "memory-postgres")]
@@ -121,6 +131,31 @@ pub fn should_skip_autosave_content(content: &str) -> bool {
         || lowered.starts_with("[heartbeat task")
         || lowered.starts_with("[distilled_")
         || lowered.contains("distilled_index_sig:")
+}
+
+/// Resolved `[memory]` embedding settings for layered recall / tooling.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryEmbeddingResolution {
+    pub provider: String,
+    pub model: String,
+    pub dimensions: usize,
+    pub api_key: Option<String>,
+}
+
+/// Resolve embedding provider/model/key (including `hint:` routes).
+#[must_use]
+pub fn resolve_memory_embedding(
+    config: &MemoryConfig,
+    embedding_routes: &[EmbeddingRouteConfig],
+    api_key: Option<&str>,
+) -> MemoryEmbeddingResolution {
+    let r = resolve_embedding_config(config, embedding_routes, api_key);
+    MemoryEmbeddingResolution {
+        provider: r.provider,
+        model: r.model,
+        dimensions: r.dimensions,
+        api_key: r.api_key,
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]

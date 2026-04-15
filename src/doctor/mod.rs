@@ -148,6 +148,17 @@ pub fn run_query_engine() -> Result<()> {
         }
         None => println!("  Static prefix (last assembly): n/a (no assembly recorded in-process)"),
     }
+    match crate::agent::query_engine::last_layered_memory_selection() {
+        Some(m) => {
+            println!(
+                "  Layered memory (last selector): topics picked: {} | session injected: {} | staleness warnings: {}",
+                m.topics_picked,
+                if m.session_injected { "yes" } else { "no" },
+                m.staleness_warnings
+            );
+        }
+        None => println!("  Layered memory (last selector): n/a"),
+    }
     println!();
     let tail = crate::agent::query_engine::drain_diagnostics();
     if tail.is_empty() {

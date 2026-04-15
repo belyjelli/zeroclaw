@@ -89,6 +89,40 @@ pub fn last_system_prompt_assembly() -> Option<SystemPromptAssemblyDiag> {
         .clone()
 }
 
+/// Last layered memory selector stats (in-process), for `zeroclaw doctor query-engine`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LayeredMemoryDiag {
+    pub topics_picked: usize,
+    pub session_injected: bool,
+    pub staleness_warnings: usize,
+}
+
+static LAST_LAYERED_MEMORY: LazyLock<Mutex<Option<LayeredMemoryDiag>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+pub fn record_layered_memory_selection(
+    topics_picked: usize,
+    session_injected: bool,
+    staleness_warnings: usize,
+) {
+    let mut g = LAST_LAYERED_MEMORY
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    *g = Some(LayeredMemoryDiag {
+        topics_picked,
+        session_injected,
+        staleness_warnings,
+    });
+}
+
+#[must_use]
+pub fn last_layered_memory_selection() -> Option<LayeredMemoryDiag> {
+    LAST_LAYERED_MEMORY
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+}
+
 /// Heuristic: model may have stopped early due to output token cap — caller may append a nudge.
 #[must_use]
 pub fn should_request_token_continuation(

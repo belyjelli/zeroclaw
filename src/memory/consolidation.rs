@@ -117,6 +117,58 @@ pub async fn consolidate_turn(
         }
     }
 
+    // Layered filesystem memory (orthogonal to the `Memory` trait stores above).
+    if let Some(ctx) = crate::memory::layered_context::peek_pending_layered_turn() {
+        if ctx.layered.enabled {
+            let idx_cap = ctx.layered.index_max_entries;
+            if let Err(e) = crate::memory::session_memory::write_turn_file(
+                ctx.workspace_dir.as_path(),
+                ctx.session_key.as_str(),
+                result.history_entry.trim(),
+                user_message,
+                assistant_response,
+            )
+            .await
+            {
+                tracing::debug!(error = %e, "layered session_memory write skipped");
+            }
+            if !result.facts.is_empty() {
+                for fact in result.facts.iter().take(2) {
+                    let f = fact.trim();
+                    if f.len() > 12 {
+                        let title: String = f.chars().take(64).collect();
+                        if let Err(e) = crate::memory::auto_memory::append_high_confidence_fact(
+                            ctx.workspace_dir.as_path(),
+                            &title,
+                            f,
+                            0.75,
+                            idx_cap,
+                        )
+                        .await
+                        {
+                            tracing::debug!(error = %e, "layered auto_memory fact append skipped");
+                        }
+                    }
+                }
+            } else if let Some(ref upd) = result.memory_update {
+                let u = upd.trim();
+                if u.len() > 20 {
+                    if let Err(e) = crate::memory::auto_memory::append_high_confidence_fact(
+                        ctx.workspace_dir.as_path(),
+                        "Consolidated memory",
+                        u,
+                        0.85,
+                        idx_cap,
+                    )
+                    .await
+                    {
+                        tracing::debug!(error = %e, "layered auto_memory update append skipped");
+                    }
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 

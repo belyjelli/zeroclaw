@@ -81,6 +81,10 @@ pub struct Agent {
     autonomy_level: crate::security::AutonomyLevel,
     /// Optional hook runner (e.g. gateway WS path for post-turn hooks).
     hooks: Option<Arc<HookRunner>>,
+    /// Full `[memory]` config (layered recall + embedding weights).
+    memory_cfg: crate::config::MemoryConfig,
+    embedding_routes: Vec<crate::config::EmbeddingRouteConfig>,
+    provider_api_key: Option<String>,
 }
 
 pub struct AgentBuilder {
@@ -110,6 +114,9 @@ pub struct AgentBuilder {
     security_summary: Option<String>,
     autonomy_level: Option<crate::security::AutonomyLevel>,
     hooks: Option<Arc<HookRunner>>,
+    memory_cfg: Option<crate::config::MemoryConfig>,
+    embedding_routes: Option<Vec<crate::config::EmbeddingRouteConfig>>,
+    provider_api_key: Option<String>,
 }
 
 impl AgentBuilder {
@@ -141,6 +148,9 @@ impl AgentBuilder {
             security_summary: None,
             autonomy_level: None,
             hooks: None,
+            memory_cfg: None,
+            embedding_routes: None,
+            provider_api_key: None,
         }
     }
 
@@ -283,6 +293,21 @@ impl AgentBuilder {
         self
     }
 
+    pub fn memory_cfg(mut self, cfg: crate::config::MemoryConfig) -> Self {
+        self.memory_cfg = Some(cfg);
+        self
+    }
+
+    pub fn embedding_routes(mut self, routes: Vec<crate::config::EmbeddingRouteConfig>) -> Self {
+        self.embedding_routes = Some(routes);
+        self
+    }
+
+    pub fn provider_api_key(mut self, key: Option<String>) -> Self {
+        self.provider_api_key = key;
+        self
+    }
+
     pub fn build(self) -> Result<Agent> {
         let mut tools = self
             .tools
@@ -342,6 +367,9 @@ impl AgentBuilder {
                 .autonomy_level
                 .unwrap_or(crate::security::AutonomyLevel::Supervised),
             hooks: self.hooks,
+            memory_cfg: self.memory_cfg.unwrap_or_default(),
+            embedding_routes: self.embedding_routes.unwrap_or_default(),
+            provider_api_key: self.provider_api_key,
         })
     }
 }
@@ -381,7 +409,7 @@ impl Agent {
     /// to avoid duplicating the system prompt.
     pub fn seed_history(&mut self, messages: &[ChatMessage]) {
         if self.history.is_empty() {
-            if let Ok(sys) = self.build_system_prompt() {
+            if let Ok(sys) = self.build_system_prompt(None) {
                 self.history
                     .push(ConversationMessage::Chat(ChatMessage::system(sys)));
             }
@@ -585,6 +613,9 @@ impl Agent {
             .security_summary(Some(security.prompt_summary()))
             .autonomy_level(config.autonomy.level)
             .hooks(hooks)
+            .memory_cfg(config.memory.clone())
+            .embedding_routes(config.embedding_routes.clone())
+            .provider_api_key(config.api_key.clone())
             .build()
     }
 
@@ -639,7 +670,7 @@ impl Agent {
         }
     }
 
-    fn build_system_prompt(&self) -> Result<String> {
+    fn build_system_prompt(&self, layered_memory_markdown: Option<&str>) -> Result<String> {
         let mut tool_pairs = Vec::with_capacity(self.tools.len());
         for tool in &self.tools {
             let desc = self
@@ -683,6 +714,7 @@ impl Agent {
             dispatcher_instructions: Some(instructions.as_str()),
             security_summary: self.security_summary.as_deref(),
             include_channel_media: true,
+            layered_memory_markdown,
         };
         let sp = crate::agent::system_prompt::assemble_once(&ctx)?;
         Ok(sp.full())
@@ -791,12 +823,64 @@ impl Agent {
     }
 
     pub async fn turn(&mut self, user_message: &str) -> Result<String> {
+        let layered_owned = if self.memory_cfg.layered.enabled {
+            let sk = self
+                .memory_session_id
+                .as_deref()
+                .unwrap_or("gateway:nosession");
+            let res = memory::layered_selector::select_relevant(
+                user_message,
+                &self.workspace_dir,
+                sk,
+                &self.memory_cfg.layered,
+                &self.memory_cfg,
+                self.provider_api_key.as_deref(),
+                self.embedding_routes.as_slice(),
+            )
+            .await;
+            crate::agent::query_engine::record_layered_memory_selection(
+                res.topics_picked,
+                res.session_injected,
+                res.staleness_warnings,
+            );
+            if res.text.trim().is_empty() {
+                None
+            } else {
+                Some(res.text)
+            }
+        } else {
+            None
+        };
+        let layered_ref = layered_owned.as_deref();
+
+        if self.memory_cfg.layered.enabled && self.auto_save {
+            crate::memory::layered_context::install_pending_layered_turn(Some(
+                crate::memory::layered_context::LayeredTurnContext {
+                    workspace_dir: self.workspace_dir.clone(),
+                    session_key: self
+                        .memory_session_id
+                        .clone()
+                        .unwrap_or_else(|| "gateway:nosession".into()),
+                    layered: self.memory_cfg.layered.clone(),
+                },
+            ));
+        } else {
+            crate::memory::layered_context::install_pending_layered_turn(None);
+        }
+
         if self.history.is_empty() {
-            let system_prompt = self.build_system_prompt()?;
+            let system_prompt = self.build_system_prompt(layered_ref)?;
             self.history
                 .push(ConversationMessage::Chat(ChatMessage::system(
                     system_prompt,
                 )));
+        } else if self.memory_cfg.layered.enabled {
+            let new_sys = self.build_system_prompt(layered_ref)?;
+            if let Some(ConversationMessage::Chat(cm)) = self.history.first_mut() {
+                if cm.role == "system" {
+                    cm.content = new_sys;
+                }
+            }
         }
 
         let effective_model = self.classify_model(user_message);
@@ -813,15 +897,18 @@ impl Agent {
             Some("agent.turn".into()),
         );
 
-        let context = self
-            .memory_loader
-            .load_context(
-                self.memory.as_ref(),
-                user_message,
-                self.memory_session_id.as_deref(),
-            )
-            .await
-            .unwrap_or_default();
+        let context = if self.memory_cfg.layered.enabled {
+            String::new()
+        } else {
+            self.memory_loader
+                .load_context(
+                    self.memory.as_ref(),
+                    user_message,
+                    self.memory_session_id.as_deref(),
+                )
+                .await
+                .unwrap_or_default()
+        };
 
         if self.auto_save {
             let _ = self
@@ -989,12 +1076,64 @@ impl Agent {
         event_tx: tokio::sync::mpsc::Sender<TurnEventSink>,
     ) -> Result<String> {
         // ── Preamble (aligned with [`turn`](Self::turn): transcript-first) ──
+        let layered_owned = if self.memory_cfg.layered.enabled {
+            let sk = self
+                .memory_session_id
+                .as_deref()
+                .unwrap_or("gateway:nosession");
+            let res = memory::layered_selector::select_relevant(
+                user_message,
+                &self.workspace_dir,
+                sk,
+                &self.memory_cfg.layered,
+                &self.memory_cfg,
+                self.provider_api_key.as_deref(),
+                self.embedding_routes.as_slice(),
+            )
+            .await;
+            crate::agent::query_engine::record_layered_memory_selection(
+                res.topics_picked,
+                res.session_injected,
+                res.staleness_warnings,
+            );
+            if res.text.trim().is_empty() {
+                None
+            } else {
+                Some(res.text)
+            }
+        } else {
+            None
+        };
+        let layered_ref = layered_owned.as_deref();
+
+        if self.memory_cfg.layered.enabled && self.auto_save {
+            crate::memory::layered_context::install_pending_layered_turn(Some(
+                crate::memory::layered_context::LayeredTurnContext {
+                    workspace_dir: self.workspace_dir.clone(),
+                    session_key: self
+                        .memory_session_id
+                        .clone()
+                        .unwrap_or_else(|| "gateway:nosession".into()),
+                    layered: self.memory_cfg.layered.clone(),
+                },
+            ));
+        } else {
+            crate::memory::layered_context::install_pending_layered_turn(None);
+        }
+
         if self.history.is_empty() {
-            let system_prompt = self.build_system_prompt()?;
+            let system_prompt = self.build_system_prompt(layered_ref)?;
             self.history
                 .push(ConversationMessage::Chat(ChatMessage::system(
                     system_prompt,
                 )));
+        } else if self.memory_cfg.layered.enabled {
+            let new_sys = self.build_system_prompt(layered_ref)?;
+            if let Some(ConversationMessage::Chat(cm)) = self.history.first_mut() {
+                if cm.role == "system" {
+                    cm.content = new_sys;
+                }
+            }
         }
 
         let effective_model = self.classify_model(user_message);
@@ -1011,15 +1150,18 @@ impl Agent {
             Some("agent.turn_streamed".into()),
         );
 
-        let context = self
-            .memory_loader
-            .load_context(
-                self.memory.as_ref(),
-                user_message,
-                self.memory_session_id.as_deref(),
-            )
-            .await
-            .unwrap_or_default();
+        let context = if self.memory_cfg.layered.enabled {
+            String::new()
+        } else {
+            self.memory_loader
+                .load_context(
+                    self.memory.as_ref(),
+                    user_message,
+                    self.memory_session_id.as_deref(),
+                )
+                .await
+                .unwrap_or_default()
+        };
 
         if self.auto_save {
             let _ = self

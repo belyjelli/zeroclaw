@@ -4819,6 +4819,51 @@ impl Default for QdrantConfig {
     }
 }
 
+/// Layered AutoMemory + SessionMemory (`~/.zeroclaw/memory/...`, `~/.zeroclaw/sessions/.../session-memory/`).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct LayeredMemoryConfig {
+    /// Enable layered memory injection (replaces full workspace `MEMORY.md` in the dynamic tail when set).
+    #[serde(default)]
+    pub enabled: bool,
+    /// Inject staleness warnings for AutoMemory topics older than this many days.
+    #[serde(default = "default_layered_staleness_days")]
+    pub staleness_warn_days: u32,
+    /// Max `- [...](...)` index rows retained in AutoMemory `MEMORY.md`.
+    #[serde(default = "default_layered_index_max_entries")]
+    pub index_max_entries: usize,
+    /// Max topic bodies injected per LLM call (after ranking).
+    #[serde(default = "default_layered_max_topics")]
+    pub max_topics_in_prompt: usize,
+    /// Hard cap on layered markdown block size (characters).
+    #[serde(default = "default_layered_max_chars")]
+    pub max_chars_total: usize,
+}
+
+fn default_layered_staleness_days() -> u32 {
+    7
+}
+fn default_layered_index_max_entries() -> usize {
+    200
+}
+fn default_layered_max_topics() -> usize {
+    5
+}
+fn default_layered_max_chars() -> usize {
+    8000
+}
+
+impl Default for LayeredMemoryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            staleness_warn_days: default_layered_staleness_days(),
+            index_max_entries: default_layered_index_max_entries(),
+            max_topics_in_prompt: default_layered_max_topics(),
+            max_chars_total: default_layered_max_chars(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct MemoryConfig {
@@ -4941,6 +4986,10 @@ pub struct MemoryConfig {
     /// Only used when `backend = "qdrant"`.
     #[serde(default)]
     pub qdrant: QdrantConfig,
+
+    /// Layered memory (curated topic files + per-session summaries).
+    #[serde(default)]
+    pub layered: LayeredMemoryConfig,
 }
 
 /// Memory policy configuration (`[memory.policy]` section).
@@ -5061,6 +5110,7 @@ impl Default for MemoryConfig {
             policy: MemoryPolicyConfig::default(),
             sqlite_open_timeout_secs: None,
             qdrant: QdrantConfig::default(),
+            layered: LayeredMemoryConfig::default(),
         }
     }
 }
@@ -11013,6 +11063,7 @@ default_temperature = 0.7
         assert_eq!(m.purge_after_days, 30);
         assert_eq!(m.conversation_retention_days, 30);
         assert!(m.sqlite_open_timeout_secs.is_none());
+        assert!(!m.layered.enabled);
     }
 
     #[test]

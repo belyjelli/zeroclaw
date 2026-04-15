@@ -598,16 +598,32 @@ fn load_interactive_session_history(path: &Path, system_prompt: &str) -> Result<
     Ok(crate::agent::session_record::load_session_record(path, system_prompt)?.history)
 }
 
+fn last_user_content_for_layered(history: &[ChatMessage]) -> &str {
+    for m in history.iter().rev() {
+        if m.role == "user" {
+            return m.content.as_str();
+        }
+    }
+    ""
+}
+
 /// Build context preamble by searching memory for relevant entries.
 /// Entries with a hybrid score below `min_relevance_score` are dropped to
 /// prevent unrelated memories from bleeding into the conversation.
 /// Core memories are exempt from time decay (evergreen).
+///
+/// When `suppress_user_memory_prefix` is true (layered memory mode), returns empty: recall
+/// is injected via the system prompt dynamic tail instead.
 async fn build_context(
     mem: &dyn Memory,
     user_msg: &str,
     min_relevance_score: f64,
     session_id: Option<&str>,
+    suppress_user_memory_prefix: bool,
 ) -> String {
+    if suppress_user_memory_prefix {
+        return String::new();
+    }
     let mut context = String::new();
 
     // Pull relevant memories for this message
@@ -2855,11 +2871,43 @@ pub(crate) async fn run_tool_call_loop_body(
                 }
                 static_suffix.push_str(refs.deferred_section);
             }
+            let layered_memory_cell: Option<String> =
+                if let Some(ref lam) = refs.layered {
+                    if lam.memory.layered.enabled {
+                        let q = last_user_content_for_layered(history);
+                        let res = memory::layered_selector::select_relevant(
+                            q,
+                            refs.workspace_dir,
+                            lam.session_key,
+                            &lam.memory.layered,
+                            lam.memory,
+                            lam.embedding_api_key,
+                            lam.embedding_routes,
+                        )
+                        .await;
+                        crate::agent::query_engine::record_layered_memory_selection(
+                            res.topics_picked,
+                            res.session_injected,
+                            res.staleness_warnings,
+                        );
+                        if res.text.trim().is_empty() {
+                            None
+                        } else {
+                            Some(res.text)
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+            let layered_for_prompt = layered_memory_cell.as_deref();
             if let Err(e) = crate::agent::system_prompt::patch_history_system_prompt(
                 &mut system_prompt_assembly_memo,
                 refs,
                 use_native_tools,
                 &static_suffix,
+                layered_for_prompt,
                 history,
             ) {
                 tracing::warn!(error = %e, "system prompt refresh skipped");
@@ -4208,6 +4256,7 @@ pub async fn run(
             &effective_msg,
             config.memory.min_relevance_score,
             memory_session_id.as_deref(),
+            config.memory.layered.enabled,
         )
         .await;
         let rag_limit = if config.agent.compact_context { 2 } else { 5 };
@@ -4294,7 +4343,29 @@ pub async fn run(
                 i18n_descs: &i18n_descs,
                 deferred_section: deferred_section.as_str(),
                 thinking_prefix: thinking_params.system_prompt_prefix.as_deref(),
+                layered: if config.memory.layered.enabled {
+                    Some(crate::agent::system_prompt::LayeredMemoryAssembly {
+                        memory: &config.memory,
+                        session_key: transcript_session_key.as_str(),
+                        zeroclaw_dir: user_zeroclaw_assembly.as_deref(),
+                        embedding_api_key: config.api_key.as_deref(),
+                        embedding_routes: config.embedding_routes.as_slice(),
+                    })
+                } else {
+                    None
+                },
             };
+            let layered_pending =
+                if config.memory.layered.enabled && config.memory.auto_save {
+                    Some(crate::memory::layered_context::LayeredTurnContext {
+                        workspace_dir: config.workspace_dir.clone(),
+                        session_key: transcript_session_key.clone(),
+                        layered: config.memory.layered.clone(),
+                    })
+                } else {
+                    None
+                };
+            crate::memory::layered_context::install_pending_layered_turn(layered_pending);
             match crate::agent::session_transcript::SESSION_TRANSCRIPT_CONTEXT
                 .scope(
                     Some(crate::agent::session_transcript::SessionTranscriptScope {
@@ -4547,6 +4618,7 @@ pub async fn run(
                 &effective_input,
                 config.memory.min_relevance_score,
                 memory_session_id.as_deref(),
+                config.memory.layered.enabled,
             )
             .await;
             let rag_limit = if config.agent.compact_context { 2 } else { 5 };
@@ -4620,7 +4692,29 @@ pub async fn run(
                     i18n_descs: &i18n_descs,
                     deferred_section: deferred_section.as_str(),
                     thinking_prefix: thinking_params.system_prompt_prefix.as_deref(),
+                    layered: if config.memory.layered.enabled {
+                        Some(crate::agent::system_prompt::LayeredMemoryAssembly {
+                            memory: &config.memory,
+                            session_key: transcript_session_key.as_str(),
+                            zeroclaw_dir: user_zeroclaw_assembly.as_deref(),
+                            embedding_api_key: config.api_key.as_deref(),
+                            embedding_routes: config.embedding_routes.as_slice(),
+                        })
+                    } else {
+                        None
+                    },
                 };
+                let layered_pending =
+                    if config.memory.layered.enabled && config.memory.auto_save {
+                        Some(crate::memory::layered_context::LayeredTurnContext {
+                            workspace_dir: config.workspace_dir.clone(),
+                            session_key: transcript_session_key.clone(),
+                            layered: config.memory.layered.clone(),
+                        })
+                    } else {
+                        None
+                    };
+                crate::memory::layered_context::install_pending_layered_turn(layered_pending);
                 match crate::agent::session_transcript::SESSION_TRANSCRIPT_CONTEXT
                     .scope(
                         Some(crate::agent::session_transcript::SessionTranscriptScope {
@@ -5075,6 +5169,7 @@ pub async fn process_message(
         effective_msg_ref,
         config.memory.min_relevance_score,
         session_id,
+        config.memory.layered.enabled,
     )
     .await;
     let rag_limit = if config.agent.compact_context { 2 } else { 5 };
@@ -7632,7 +7727,7 @@ Tail"#;
         .await
         .unwrap();
 
-        let context = build_context(&mem, "status updates", 0.0, None).await;
+        let context = build_context(&mem, "status updates", 0.0, None, false).await;
         assert!(context.contains("user_msg_real"));
         assert!(!context.contains("assistant_resp_poisoned"));
         assert!(!context.contains("fabricated event"));

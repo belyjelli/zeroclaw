@@ -2,7 +2,8 @@
 //! [`SYSTEM_PROMPT_DYNAMIC_BOUNDARY`] for Anthropic multi-block system prompts.
 
 use crate::config::{
-    AutonomyConfig, DynamicContextConfig, IdentityConfig, SkillsPromptInjectionMode,
+    AutonomyConfig, DynamicContextConfig, EmbeddingRouteConfig, IdentityConfig, MemoryConfig,
+    SkillsPromptInjectionMode,
 };
 use crate::context::DynamicContextPaths;
 use crate::providers::ChatMessage;
@@ -67,6 +68,8 @@ pub struct PromptAssemblyContext<'a> {
     pub security_summary: Option<&'a str>,
     /// Include the channel media markers section (gateway).
     pub include_channel_media: bool,
+    /// When set, replaces wholesale workspace `MEMORY.md` in the dynamic tail (layered memory).
+    pub layered_memory_markdown: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -334,6 +337,7 @@ pub fn build_system_prompt_with_mode_and_autonomy(
         dispatcher_instructions: None,
         security_summary: None,
         include_channel_media: false,
+        layered_memory_markdown: None,
     };
     match assemble_once(&ctx) {
         Ok(sp) => {
@@ -348,6 +352,16 @@ pub fn build_system_prompt_with_mode_and_autonomy(
         Err(_) => "You are ZeroClaw, a fast and efficient AI assistant built in Rust. Be helpful, concise, and direct."
             .to_string(),
     }
+}
+
+/// Wiring for layered memory selector + dynamic tail injection.
+#[derive(Debug, Clone, Copy)]
+pub struct LayeredMemoryAssembly<'a> {
+    pub memory: &'a MemoryConfig,
+    pub session_key: &'a str,
+    pub zeroclaw_dir: Option<&'a Path>,
+    pub embedding_api_key: Option<&'a str>,
+    pub embedding_routes: &'a [EmbeddingRouteConfig],
 }
 
 /// Inputs needed to rebuild the system message inside the tool loop (after compaction).
@@ -368,6 +382,8 @@ pub struct SystemPromptAssemblyRefs<'a> {
     pub i18n_descs: &'a crate::i18n::ToolDescriptions,
     pub deferred_section: &'a str,
     pub thinking_prefix: Option<&'a str>,
+    /// When present, the tool loop may compute a layered-memory markdown block each iteration.
+    pub layered: Option<LayeredMemoryAssembly<'a>>,
 }
 
 impl<'a> SystemPromptAssemblyRefs<'a> {
@@ -375,6 +391,7 @@ impl<'a> SystemPromptAssemblyRefs<'a> {
         &'b self,
         native_tools: bool,
         static_suffix: &'b str,
+        layered_memory_markdown: Option<&'b str>,
     ) -> PromptAssemblyContext<'b> {
         PromptAssemblyContext {
             workspace_dir: self.workspace_dir,
@@ -394,6 +411,7 @@ impl<'a> SystemPromptAssemblyRefs<'a> {
             dispatcher_instructions: None,
             security_summary: None,
             include_channel_media: false,
+            layered_memory_markdown,
         }
     }
 }
@@ -404,9 +422,10 @@ pub fn patch_history_system_prompt(
     refs: &SystemPromptAssemblyRefs<'_>,
     native_tools: bool,
     static_suffix: &str,
+    layered_memory_markdown: Option<&str>,
     history: &mut Vec<ChatMessage>,
 ) -> Result<()> {
-    let ctx = refs.prompt_context(native_tools, static_suffix);
+    let ctx = refs.prompt_context(native_tools, static_suffix, layered_memory_markdown);
     let (sp, static_reused) = assemble_with_memo(memo, &ctx)?;
     let body = sp.full();
     let content = match refs.thinking_prefix {
@@ -638,7 +657,12 @@ fn render_static_body(ctx: &PromptAssemblyContext<'_>) -> Result<String> {
 fn render_dynamic_tail(ctx: &PromptAssemblyContext<'_>) -> Result<String> {
     let mut prompt = String::with_capacity(4096);
 
-    if should_emit_memory_md(ctx) {
+    if let Some(lm) = ctx.layered_memory_markdown {
+        if !lm.trim().is_empty() {
+            prompt.push_str(lm);
+            prompt.push_str("\n\n");
+        }
+    } else if should_emit_memory_md(ctx) {
         inject_workspace_file(
             &mut prompt,
             ctx.workspace_dir,
@@ -774,6 +798,7 @@ mod tests {
             dispatcher_instructions: None,
             security_summary: None,
             include_channel_media: false,
+            layered_memory_markdown: None,
         };
         let sp = assemble_once(&ctx).unwrap();
         assert!(sp.static_prefix.contains("## CRITICAL: No Tool Narration"));
