@@ -230,7 +230,6 @@ default = [
     "channel-nostr",
     "channel-lark",
     "skill-creation",
-    "query_engine_v2",
 ]
 channel-nostr = ["dep:nostr-sdk"]
 hardware = ["nusb", "tokio-serial"]
@@ -258,8 +257,6 @@ probe = ["dep:probe-rs"]
 rag-pdf = ["dep:pdf-extract"]
 # skill-creation = Autonomous skill creation from successful multi-step tasks
 skill-creation = []
-# query_engine_v2 = Explicit QueryEngine orchestration path (compaction pipeline, diagnostics, extra hooks)
-query_engine_v2 = []
 # whatsapp-web = Native WhatsApp Web client with custom rusqlite storage backend
 whatsapp-web = ["dep:wa-rs", "dep:wa-rs-core", "dep:wa-rs-binary", "dep:wa-rs-proto", "dep:wa-rs-ureq-http", "dep:wa-rs-tokio-transport", "dep:serde-big-array", "dep:prost", "dep:qrcode"]
 # voice-wake = Voice wake word detection via microphone (cpal)
@@ -270,7 +267,6 @@ plugins-wasm = ["dep:extism"]
 # not available on standard CI runners (e.g., voice-wake needs libasound2-dev).
 ci-all = [
     "channel-nostr",
-    "query_engine_v2",
     "hardware",
     "channel-matrix",
     "channel-lark",

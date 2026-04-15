@@ -360,6 +360,8 @@ pub struct AppState {
     pub device_registry: Option<Arc<api_pairing::DeviceRegistry>>,
     /// Pending pairing request store
     pub pending_pairings: Option<Arc<api_pairing::PairingStore>>,
+    /// Optional hook runner (shared with WebSocket agent, post-turn hooks, etc.)
+    pub hooks: Option<Arc<crate::hooks::HookRunner>>,
     /// Shared canvas store for Live Canvas (A2UI) system
     pub canvas_store: CanvasStore,
 }
@@ -380,13 +382,6 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         );
     }
     let config_state = Arc::new(Mutex::new(config.clone()));
-
-    // ── Hooks ──────────────────────────────────────────────────────
-    let hooks: Option<std::sync::Arc<crate::hooks::HookRunner>> = if config.hooks.enabled {
-        Some(std::sync::Arc::new(crate::hooks::HookRunner::new()))
-    } else {
-        None
-    };
 
     let addr: SocketAddr = format!("{host}:{port}").parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -422,6 +417,16 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         &config.workspace_dir,
         config.api_key.as_deref(),
     )?);
+
+    // ── Hooks (builtins + optional memory consolidation) ─────────────
+    let hooks = crate::hooks::hook_runner_from_config(
+        &config.hooks,
+        config.memory.auto_save,
+        Arc::clone(&provider),
+        model.clone(),
+        Arc::clone(&mem),
+    );
+
     let runtime: Arc<dyn runtime::RuntimeAdapter> =
         Arc::from(runtime::create_runtime(&config.runtime)?);
     let security = Arc::new(SecurityPolicy::from_config(
@@ -850,6 +855,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         device_registry,
         pending_pairings,
         path_prefix: path_prefix.unwrap_or("").to_string(),
+        hooks: hooks.clone(),
         canvas_store,
     };
 
@@ -2148,6 +2154,7 @@ mod tests {
             session_backend: None,
             device_registry: None,
             pending_pairings: None,
+            hooks: None,
             canvas_store: CanvasStore::new(),
         };
 
@@ -2206,6 +2213,7 @@ mod tests {
             session_backend: None,
             device_registry: None,
             pending_pairings: None,
+            hooks: None,
             canvas_store: CanvasStore::new(),
         };
 
@@ -2594,6 +2602,7 @@ mod tests {
             session_backend: None,
             device_registry: None,
             pending_pairings: None,
+            hooks: None,
             canvas_store: CanvasStore::new(),
         };
 
@@ -2666,6 +2675,7 @@ mod tests {
             session_backend: None,
             device_registry: None,
             pending_pairings: None,
+            hooks: None,
             canvas_store: CanvasStore::new(),
         };
 
@@ -2750,6 +2760,7 @@ mod tests {
             session_backend: None,
             device_registry: None,
             pending_pairings: None,
+            hooks: None,
             canvas_store: CanvasStore::new(),
         };
 
@@ -2806,6 +2817,7 @@ mod tests {
             session_backend: None,
             device_registry: None,
             pending_pairings: None,
+            hooks: None,
             canvas_store: CanvasStore::new(),
         };
 
@@ -2867,6 +2879,7 @@ mod tests {
             session_backend: None,
             device_registry: None,
             pending_pairings: None,
+            hooks: None,
             canvas_store: CanvasStore::new(),
         };
 
@@ -2933,6 +2946,7 @@ mod tests {
             session_backend: None,
             device_registry: None,
             pending_pairings: None,
+            hooks: None,
             canvas_store: CanvasStore::new(),
         };
 
@@ -2995,6 +3009,7 @@ mod tests {
             session_backend: None,
             device_registry: None,
             pending_pairings: None,
+            hooks: None,
             canvas_store: CanvasStore::new(),
         };
 

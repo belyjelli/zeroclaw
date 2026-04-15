@@ -1,8 +1,11 @@
-//! QueryEngine v2: diagnostics + traced delegation into [`super::loop_::run_tool_call_loop_body`].
+//! QueryEngine: diagnostics + traced delegation into [`super::loop_::run_tool_call_loop_body`].
+//!
+//! This module is the canonical orchestration boundary (lesson 04-style): one turn runs inside
+//! [`run_query_loop`], which records transitions and runs post-turn stop hooks.
 
-use super::state::{TurnTransition, TransitionReason};
+use super::state::{EngineState, TurnTransition, TransitionReason};
 use crate::approval::ApprovalManager;
-use crate::hooks::HookRunner;
+use crate::hooks::{HookResult, HookRunner};
 use crate::observability::Observer;
 use crate::providers::{ChatMessage, Provider};
 use crate::tools::Tool;
@@ -61,8 +64,10 @@ pub fn should_request_token_continuation(
     out >= 900 && output_text_chars < 24
 }
 
+/// Article-style outer turn loop: diagnostics + body + post-turn hooks.
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn run_tool_call_loop_traced(
+pub(crate) async fn run_query_loop(
+    state: &mut EngineState,
     provider: &dyn Provider,
     history: &mut Vec<ChatMessage>,
     tools_registry: &[Box<dyn Tool>],
@@ -86,7 +91,9 @@ pub(crate) async fn run_tool_call_loop_traced(
     pacing: &crate::config::PacingConfig,
     tool_result_offload: &crate::config::ToolResultOffloadConfig,
     history_pruning: &crate::agent::history_pruner::HistoryPrunerConfig,
+    turn_user_message: Option<&str>,
 ) -> Result<String> {
+    state.last_transition = Some(TransitionReason::BeginTurn);
     record_transition(TransitionReason::BeginTurn, None);
     let res = super::loop_::run_tool_call_loop_body(
         provider,
@@ -115,11 +122,34 @@ pub(crate) async fn run_tool_call_loop_traced(
     )
     .await;
     match &res {
-        Ok(_) => record_transition(TransitionReason::TurnComplete, None),
-        Err(e) => record_transition(TransitionReason::TurnError, Some(e.to_string())),
+        Ok(_) => {
+            state.last_transition = Some(TransitionReason::TurnComplete);
+            record_transition(TransitionReason::TurnComplete, None);
+        }
+        Err(e) => {
+            state.last_transition = Some(TransitionReason::TurnError);
+            record_transition(TransitionReason::TurnError, Some(e.to_string()));
+        }
     }
-    if let (Ok(ref text), Some(hooks)) = (&res, hooks) {
-        super::stop_hooks::fire_after_turn_void(hooks, channel_name, text.as_str()).await;
+    if let (Ok(text), Some(hooks)) = (&res, hooks) {
+        let user = turn_user_message.unwrap_or("");
+        super::stop_hooks::fire_after_turn_void(hooks, channel_name, user, text.as_str()).await;
+        match super::stop_hooks::run_after_turn_blocking(
+            hooks,
+            channel_name,
+            user,
+            text.as_str(),
+        )
+        .await
+        {
+            HookResult::Continue(()) => {}
+            HookResult::Cancel(reason) => {
+                record_transition(
+                    TransitionReason::StopHookBlocking,
+                    Some(reason),
+                );
+            }
+        }
     }
     res
 }

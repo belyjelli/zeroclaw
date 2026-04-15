@@ -313,11 +313,18 @@ impl HookRunner {
         HookResult::Continue((channel, recipient, content))
     }
 
-    pub async fn fire_after_turn_completed(&self, channel: &str, summary: &str) {
+    pub async fn fire_after_turn_completed(
+        &self,
+        channel: &str,
+        user_message: &str,
+        assistant_summary: &str,
+    ) {
         let futs: Vec<_> = self
             .handlers
             .iter()
-            .map(|h| h.on_after_turn_completed(channel, summary))
+            .map(|h| {
+                h.on_after_turn_completed(channel, user_message, assistant_summary)
+            })
             .collect();
         join_all(futs).await;
     }
@@ -325,11 +332,14 @@ impl HookRunner {
     pub async fn run_after_turn_completed_blocking(
         &self,
         channel: &str,
-        summary: &str,
+        user_message: &str,
+        assistant_summary: &str,
     ) -> HookResult<()> {
         for h in &self.handlers {
             let hook_name = h.name();
-            match AssertUnwindSafe(h.after_turn_completed_blocking(channel, summary))
+            match AssertUnwindSafe(
+                h.after_turn_completed_blocking(channel, user_message, assistant_summary),
+            )
                 .catch_unwind()
                 .await
             {

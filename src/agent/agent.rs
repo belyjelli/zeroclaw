@@ -10,6 +10,7 @@ use crate::observability::{self, Observer, ObserverEvent};
 use crate::providers::{self, ChatMessage, ChatRequest, ConversationMessage, Provider};
 use crate::runtime;
 use crate::security::SecurityPolicy;
+use crate::hooks::HookRunner;
 use crate::tools::{self, Tool, ToolSpec};
 use anyhow::Result;
 use chrono::{Datelike, Timelike};
@@ -67,6 +68,8 @@ pub struct Agent {
     security_summary: Option<String>,
     /// Autonomy level from config; controls safety prompt instructions.
     autonomy_level: crate::security::AutonomyLevel,
+    /// Optional hook runner (e.g. gateway WS path for post-turn hooks).
+    hooks: Option<Arc<HookRunner>>,
 }
 
 pub struct AgentBuilder {
@@ -95,6 +98,7 @@ pub struct AgentBuilder {
     tool_descriptions: Option<ToolDescriptions>,
     security_summary: Option<String>,
     autonomy_level: Option<crate::security::AutonomyLevel>,
+    hooks: Option<Arc<HookRunner>>,
 }
 
 impl AgentBuilder {
@@ -125,6 +129,7 @@ impl AgentBuilder {
             tool_descriptions: None,
             security_summary: None,
             autonomy_level: None,
+            hooks: None,
         }
     }
 
@@ -262,6 +267,11 @@ impl AgentBuilder {
         self
     }
 
+    pub fn hooks(mut self, hooks: Option<Arc<HookRunner>>) -> Self {
+        self.hooks = hooks;
+        self
+    }
+
     pub fn build(self) -> Result<Agent> {
         let mut tools = self
             .tools
@@ -320,6 +330,7 @@ impl AgentBuilder {
             autonomy_level: self
                 .autonomy_level
                 .unwrap_or(crate::security::AutonomyLevel::Supervised),
+            hooks: self.hooks,
         })
     }
 }
@@ -339,17 +350,6 @@ impl Agent {
 
     pub fn set_memory_session_id(&mut self, session_id: Option<String>) {
         self.memory_session_id = session_id;
-    }
-
-    fn append_user_session_transcript(&self, channel: &str, model: &str, text: &str) {
-        crate::agent::session_transcript::append_user_for_config(
-            &self.config.session_transcript,
-            self.memory_session_id.as_deref().unwrap_or(""),
-            channel,
-            &self.provider_label,
-            model,
-            text,
-        );
     }
 
     fn append_session_transcript(&self, channel: &str, model: &str, text: &str) {
@@ -383,6 +383,13 @@ impl Agent {
     }
 
     pub async fn from_config(config: &Config) -> Result<Self> {
+        Self::from_config_with_hooks(config, None).await
+    }
+
+    pub async fn from_config_with_hooks(
+        config: &Config,
+        hooks: Option<Arc<HookRunner>>,
+    ) -> Result<Self> {
         let observer: Arc<dyn Observer> =
             Arc::from(observability::create_observer(&config.observability));
         let runtime: Arc<dyn runtime::RuntimeAdapter> =
@@ -566,6 +573,7 @@ impl Agent {
             .auto_save(config.memory.auto_save)
             .security_summary(Some(security.prompt_summary()))
             .autonomy_level(config.autonomy.level)
+            .hooks(hooks)
             .build()
     }
 
@@ -594,6 +602,25 @@ impl Agent {
 
         self.history = system_messages;
         self.history.extend(other_messages);
+    }
+
+    async fn fire_post_turn_hooks(&self, channel: &str, user_message: &str, assistant_summary: &str) {
+        if let Some(ref h) = self.hooks {
+            crate::agent::stop_hooks::fire_after_turn_void(
+                h,
+                channel,
+                user_message,
+                assistant_summary,
+            )
+            .await;
+            let _ = crate::agent::stop_hooks::run_after_turn_blocking(
+                h,
+                channel,
+                user_message,
+                assistant_summary,
+            )
+            .await;
+        }
     }
 
     fn build_system_prompt(&self) -> Result<String> {
@@ -745,6 +772,20 @@ impl Agent {
                 )));
         }
 
+        let effective_model = self.classify_model(user_message);
+        crate::agent::session_transcript::commit_user_turn(
+            &self.config.session_transcript,
+            self.memory_session_id.as_deref().unwrap_or(""),
+            "gateway",
+            &self.provider_label,
+            &effective_model,
+            user_message,
+        );
+        crate::agent::query_engine::record_transition(
+            crate::agent::state::TransitionReason::BeginTurn,
+            Some("agent.turn".into()),
+        );
+
         let context = self
             .memory_loader
             .load_context(
@@ -783,15 +824,6 @@ impl Agent {
         self.history
             .push(ConversationMessage::Chat(ChatMessage::user(enriched)));
 
-        let effective_model = self.classify_model(user_message);
-        self.append_user_session_transcript("gateway", &effective_model, user_message);
-
-        #[cfg(feature = "query_engine_v2")]
-        crate::agent::query_engine::record_transition(
-            crate::agent::state::TransitionReason::BeginTurn,
-            Some("agent.turn".into()),
-        );
-
         for _ in 0..self.config.max_tool_iterations {
             let messages = self.tool_dispatcher.to_provider_messages(&self.history);
 
@@ -829,6 +861,8 @@ impl Agent {
                         )));
                     self.trim_history();
                     self.append_session_transcript("gateway", &effective_model, &cached);
+                    self.fire_post_turn_hooks("gateway", user_message, cached.as_str())
+                        .await;
                     return Ok(cached);
                 }
                 self.observer.record_event(&ObserverEvent::CacheMiss {
@@ -882,6 +916,8 @@ impl Agent {
                 self.trim_history();
 
                 self.append_session_transcript("gateway", &effective_model, &final_text);
+                self.fire_post_turn_hooks("gateway", user_message, final_text.as_str())
+                    .await;
                 return Ok(final_text);
             }
 
@@ -925,7 +961,7 @@ impl Agent {
         user_message: &str,
         event_tx: tokio::sync::mpsc::Sender<TurnEvent>,
     ) -> Result<String> {
-        // ── Preamble (identical to turn) ───────────────────────────────
+        // ── Preamble (aligned with [`turn`](Self::turn): transcript-first) ──
         if self.history.is_empty() {
             let system_prompt = self.build_system_prompt()?;
             self.history
@@ -933,6 +969,20 @@ impl Agent {
                     system_prompt,
                 )));
         }
+
+        let effective_model = self.classify_model(user_message);
+        crate::agent::session_transcript::commit_user_turn(
+            &self.config.session_transcript,
+            self.memory_session_id.as_deref().unwrap_or(""),
+            "gateway",
+            &self.provider_label,
+            &effective_model,
+            user_message,
+        );
+        crate::agent::query_engine::record_transition(
+            crate::agent::state::TransitionReason::BeginTurn,
+            Some("agent.turn_streamed".into()),
+        );
 
         let context = self
             .memory_loader
@@ -965,15 +1015,6 @@ impl Agent {
 
         self.history
             .push(ConversationMessage::Chat(ChatMessage::user(enriched)));
-
-        let effective_model = self.classify_model(user_message);
-        self.append_user_session_transcript("gateway", &effective_model, user_message);
-
-        #[cfg(feature = "query_engine_v2")]
-        crate::agent::query_engine::record_transition(
-            crate::agent::state::TransitionReason::BeginTurn,
-            Some("agent.turn_streamed".into()),
-        );
 
         // ── Turn loop ──────────────────────────────────────────────────
         for _ in 0..self.config.max_tool_iterations {
@@ -1013,6 +1054,8 @@ impl Agent {
                         )));
                     self.trim_history();
                     self.append_session_transcript("gateway", &effective_model, &cached);
+                    self.fire_post_turn_hooks("gateway", user_message, cached.as_str())
+                        .await;
                     return Ok(cached);
                 }
                 self.observer.record_event(&ObserverEvent::CacheMiss {
@@ -1119,6 +1162,8 @@ impl Agent {
                 self.trim_history();
 
                 self.append_session_transcript("gateway", &effective_model, &final_text);
+                self.fire_post_turn_hooks("gateway", user_message, final_text.as_str())
+                    .await;
                 return Ok(final_text);
             }
 

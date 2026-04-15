@@ -2754,7 +2754,7 @@ async fn process_channel_message(
     #[allow(clippy::cast_possible_truncation)]
     let elapsed_before_llm_ms = started_at.elapsed().as_millis() as u64;
     tracing::info!(elapsed_before_llm_ms, "⏱ Starting LLM call");
-    crate::agent::session_transcript::append_user_for_config(
+    crate::agent::session_transcript::commit_user_turn(
         &ctx.prompt_config.agent.session_transcript,
         &conversation_history_key(&msg),
         msg.channel.as_str(),
@@ -2824,6 +2824,7 @@ async fn process_channel_message(
                             &ctx.pacing,
                             &ctx.prompt_config.agent.tool_result_offload,
                             &ctx.prompt_config.agent.history_pruning,
+                            Some(msg.content.as_str()),
                         ),
                     ),
                 ),
@@ -3050,28 +3051,6 @@ async fn process_channel_message(
                 &delivered_response,
             )
             .await;
-
-            // Fire-and-forget LLM-driven memory consolidation.
-            if ctx.auto_save_memory && msg.content.chars().count() >= AUTOSAVE_MIN_MESSAGE_CHARS {
-                let provider = Arc::clone(&ctx.provider);
-                let model = ctx.model.to_string();
-                let memory = Arc::clone(&ctx.memory);
-                let user_msg = msg.content.clone();
-                let assistant_resp = delivered_response.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = crate::memory::consolidation::consolidate_turn(
-                        provider.as_ref(),
-                        &model,
-                        memory.as_ref(),
-                        &user_msg,
-                        &assistant_resp,
-                    )
-                    .await
-                    {
-                        tracing::debug!("Memory consolidation skipped: {e}");
-                    }
-                });
-            }
 
             println!(
                 "  🤖 Reply ({}ms): {}",
@@ -5167,20 +5146,13 @@ pub async fn start_channels(config: Config) -> Result<()> {
         multimodal: config.multimodal.clone(),
         media_pipeline: config.media_pipeline.clone(),
         transcription_config: config.transcription.clone(),
-        hooks: if config.hooks.enabled {
-            let mut runner = crate::hooks::HookRunner::new();
-            if config.hooks.builtin.command_logger {
-                runner.register(Box::new(crate::hooks::builtin::CommandLoggerHook::new()));
-            }
-            if config.hooks.builtin.webhook_audit.enabled {
-                runner.register(Box::new(crate::hooks::builtin::WebhookAuditHook::new(
-                    config.hooks.builtin.webhook_audit.clone(),
-                )));
-            }
-            Some(Arc::new(runner))
-        } else {
-            None
-        },
+        hooks: crate::hooks::hook_runner_from_config(
+            &config.hooks,
+            config.memory.auto_save,
+            Arc::clone(&provider),
+            model.clone(),
+            Arc::clone(&mem),
+        ),
         non_cli_excluded_tools: Arc::new(config.autonomy.non_cli_excluded_tools.clone()),
         autonomy_level: config.autonomy.level,
         tool_call_dedup_exempt: Arc::new(config.agent.tool_call_dedup_exempt.clone()),

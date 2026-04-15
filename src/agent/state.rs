@@ -5,10 +5,20 @@
 pub enum TransitionReason {
     BeginTurn,
     PreModelCompaction,
+    /// Entering another model round after tool execution (article-style continuation).
+    ToolUseContinuation,
     ModelCall,
     ToolRound,
     PostToolHooks,
     RetryAfterCompaction,
+    /// Reactive trim after HTTP 400/413-style context errors.
+    ReactiveCompactRetry,
+    /// Recovery nudge after suspected max-output-token truncation.
+    MaxOutputTokensRecovery,
+    /// Auto-continue when under token budget (post-stop-hook path).
+    TokenBudgetContinuation,
+    /// Blocking stop-hook prevented or altered continuation.
+    StopHookBlocking,
     BudgetHalt,
     Cancelled,
     LoopDetectorInterrupt,
@@ -18,7 +28,7 @@ pub enum TransitionReason {
     TurnError,
 }
 
-/// One transition step recorded when `query_engine_v2` is enabled.
+/// One transition step recorded for QueryEngine diagnostics.
 #[derive(Debug, Clone)]
 pub struct TurnTransition {
     pub reason: TransitionReason,

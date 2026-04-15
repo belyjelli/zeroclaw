@@ -2362,6 +2362,7 @@ pub(crate) async fn agent_turn(
         &crate::config::PacingConfig::default(),
         &crate::config::ToolResultOffloadConfig::default(),
         &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+        None,
     )
     .await
 }
@@ -2647,8 +2648,7 @@ async fn execute_tools_sequential(
 //   • max_iterations is reached (runaway safety), or
 //   • the cancellation token fires (external abort).
 
-/// Public entry for the tool-call loop. With `query_engine_v2`, records turn
-/// diagnostics then delegates to [`run_tool_call_loop_body`].
+/// Public entry for the tool-call loop: QueryEngine diagnostics + [`run_tool_call_loop_body`].
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_tool_call_loop(
     provider: &dyn Provider,
@@ -2674,69 +2674,40 @@ pub(crate) async fn run_tool_call_loop(
     pacing: &crate::config::PacingConfig,
     tool_result_offload: &crate::config::ToolResultOffloadConfig,
     history_pruning: &crate::agent::history_pruner::HistoryPrunerConfig,
+    turn_user_message: Option<&str>,
 ) -> Result<String> {
-    #[cfg(feature = "query_engine_v2")]
-    {
-        return crate::agent::query_engine::run_tool_call_loop_traced(
-            provider,
-            history,
-            tools_registry,
-            observer,
-            provider_name,
-            model,
-            temperature,
-            silent,
-            approval,
-            channel_name,
-            channel_reply_target,
-            multimodal_config,
-            max_tool_iterations,
-            cancellation_token,
-            on_delta,
-            hooks,
-            excluded_tools,
-            dedup_exempt_tools,
-            activated_tools,
-            model_switch_callback,
-            pacing,
-            tool_result_offload,
-            history_pruning,
-        )
-        .await;
-    }
-    #[cfg(not(feature = "query_engine_v2"))]
-    {
-        run_tool_call_loop_body(
-            provider,
-            history,
-            tools_registry,
-            observer,
-            provider_name,
-            model,
-            temperature,
-            silent,
-            approval,
-            channel_name,
-            channel_reply_target,
-            multimodal_config,
-            max_tool_iterations,
-            cancellation_token,
-            on_delta,
-            hooks,
-            excluded_tools,
-            dedup_exempt_tools,
-            activated_tools,
-            model_switch_callback,
-            pacing,
-            tool_result_offload,
-            history_pruning,
-        )
-        .await
-    }
+    let mut engine_state = crate::agent::state::EngineState::default();
+    crate::agent::query_engine::run_query_loop(
+        &mut engine_state,
+        provider,
+        history,
+        tools_registry,
+        observer,
+        provider_name,
+        model,
+        temperature,
+        silent,
+        approval,
+        channel_name,
+        channel_reply_target,
+        multimodal_config,
+        max_tool_iterations,
+        cancellation_token,
+        on_delta,
+        hooks,
+        excluded_tools,
+        dedup_exempt_tools,
+        activated_tools,
+        model_switch_callback,
+        pacing,
+        tool_result_offload,
+        history_pruning,
+        turn_user_message,
+    )
+    .await
 }
 
-/// Core implementation of the tool-call loop (invoked directly when
-/// `query_engine_v2` is disabled, or from the query engine tracer when enabled).
+/// Core implementation of the tool-call loop (invoked from [`run_tool_call_loop`] / QueryEngine).
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_tool_call_loop_body(
     provider: &dyn Provider,
@@ -2763,9 +2734,6 @@ pub(crate) async fn run_tool_call_loop_body(
     tool_result_offload: &crate::config::ToolResultOffloadConfig,
     history_pruning: &crate::agent::history_pruner::HistoryPrunerConfig,
 ) -> Result<String> {
-    #[cfg(not(feature = "query_engine_v2"))]
-    let _ = history_pruning;
-
     let max_iterations = if max_tool_iterations == 0 {
         DEFAULT_MAX_TOOL_ITERATIONS
     } else {
@@ -2790,7 +2758,6 @@ pub(crate) async fn run_tool_call_loop_body(
         },
     );
 
-    #[cfg(feature = "query_engine_v2")]
     let mut last_round_tool_names: Vec<String> = Vec::new();
 
     for iteration in 0..max_iterations {
@@ -2825,24 +2792,21 @@ pub(crate) async fn run_tool_call_loop_body(
             }
         }
 
-        #[cfg(feature = "query_engine_v2")]
-        {
-            crate::agent::query_engine::record_transition(
-                crate::agent::state::TransitionReason::PreModelCompaction,
-                None,
-            );
-            let mut ctx = crate::agent::compaction_pipeline::CompactionContext::new(
-                iteration,
-                last_round_tool_names.clone(),
-                crate::agent::compaction_pipeline::CompactionTrigger::Routine,
-            );
-            ctx.log_context_signals = iteration > 0;
-            crate::agent::compaction_pipeline::run_pre_llm_phases(
-                history,
-                history_pruning,
-                &ctx,
-            )?;
-        }
+        crate::agent::query_engine::record_transition(
+            crate::agent::state::TransitionReason::PreModelCompaction,
+            None,
+        );
+        let mut ctx = crate::agent::compaction_pipeline::CompactionContext::new(
+            iteration,
+            last_round_tool_names.clone(),
+            crate::agent::compaction_pipeline::CompactionTrigger::Routine,
+        );
+        ctx.log_context_signals = iteration > 0;
+        crate::agent::compaction_pipeline::run_pre_llm_phases(
+            history,
+            history_pruning,
+            &ctx,
+        )?;
 
         // Rebuild tool_specs each iteration so newly activated deferred tools appear.
         let mut tool_specs: Vec<crate::tools::ToolSpec> = tools_registry
@@ -3667,10 +3631,7 @@ pub(crate) async fn run_tool_call_loop_body(
             }
         }
 
-        #[cfg(feature = "query_engine_v2")]
-        {
-            last_round_tool_names = tool_calls.iter().map(|c| c.name.clone()).collect();
-        }
+        last_round_tool_names = tool_calls.iter().map(|c| c.name.clone()).collect();
     }
 
     runtime_trace::record_event(
@@ -4279,6 +4240,7 @@ pub async fn run(
                         &config.pacing,
                         &config.agent.tool_result_offload,
                         &config.agent.history_pruning,
+                        Some(effective_msg.as_str()),
                     ),
                 )
                 .await
@@ -4576,6 +4538,7 @@ pub async fn run(
                             &config.pacing,
                             &config.agent.tool_result_offload,
                             &config.agent.history_pruning,
+                            Some(effective_input.as_str()),
                         ),
                     )
                     .await
@@ -5583,6 +5546,7 @@ mod tests {
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
         )
         .await
         .expect_err("provider without vision support should fail");
@@ -5637,6 +5601,7 @@ mod tests {
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
         )
         .await
         .expect_err("oversized payload must fail");
@@ -5684,6 +5649,7 @@ mod tests {
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
         )
         .await
         .expect("valid multimodal payload should pass");
@@ -5731,6 +5697,7 @@ mod tests {
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
         )
         .await
         .expect_err("should fail without vision_provider config");
@@ -5785,6 +5752,7 @@ mod tests {
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
         )
         .await
         .expect_err("should fail when vision provider cannot be created");
@@ -5839,6 +5807,7 @@ mod tests {
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
         )
         .await
         .expect("text-only messages should succeed with default provider");
@@ -5894,6 +5863,7 @@ mod tests {
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
         )
         .await
         .expect_err("should fail due to nonexistent vision provider");
@@ -5947,6 +5917,7 @@ mod tests {
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
         )
         .await
         .expect("empty image markers should not trigger vision routing");
@@ -6000,6 +5971,7 @@ mod tests {
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
         )
         .await
         .expect_err("should attempt vision provider creation for multiple images");
@@ -6136,6 +6108,7 @@ mod tests {
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
         )
         .await
         .expect("parallel execution should complete");
@@ -6209,6 +6182,7 @@ mod tests {
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
         )
         .await
         .expect("cron_add delivery defaults should be injected");
@@ -6274,6 +6248,7 @@ mod tests {
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
         )
         .await
         .expect("explicit delivery mode should be preserved");
@@ -6334,6 +6309,7 @@ mod tests {
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
         )
         .await
         .expect("loop should finish after deduplicating repeated calls");
@@ -6406,6 +6382,7 @@ mod tests {
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
         )
         .await
         .expect("non-interactive shell should succeed for low-risk command");
@@ -6469,6 +6446,7 @@ mod tests {
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
         )
         .await
         .expect("loop should finish with exempt tool executing twice");
@@ -6552,6 +6530,7 @@ mod tests {
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
         )
         .await
         .expect("loop should complete");
@@ -6612,6 +6591,7 @@ mod tests {
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
         )
         .await
         .expect("native fallback id flow should complete");
@@ -6696,6 +6676,7 @@ mod tests {
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
         )
         .await
         .expect("native tool-call text should be relayed through on_delta");
@@ -8688,6 +8669,7 @@ Let me check the result."#;
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
         )
         .await
         .expect("tool loop should complete");
@@ -8838,6 +8820,7 @@ Let me check the result."#;
                     &crate::config::PacingConfig::default(),
                     &crate::config::ToolResultOffloadConfig::default(),
                     &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+                    None,
                 ),
             )
             .await
@@ -8919,6 +8902,7 @@ Let me check the result."#;
                     &crate::config::PacingConfig::default(),
                     &crate::config::ToolResultOffloadConfig::default(),
                     &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+                    None,
                 ),
             )
             .await
@@ -8976,6 +8960,7 @@ Let me check the result."#;
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
         )
         .await
         .expect("should succeed without cost scope");

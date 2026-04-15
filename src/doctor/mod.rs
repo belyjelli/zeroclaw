@@ -133,27 +133,18 @@ pub fn run(config: &Config) -> Result<()> {
     Ok(())
 }
 
-/// Print QueryEngine v2 diagnostics (build feature + recent in-process transitions).
+/// Print QueryEngine diagnostics (recent in-process transitions).
 pub fn run_query_engine() -> Result<()> {
     println!("QueryEngine diagnostics");
     println!();
-    #[cfg(feature = "query_engine_v2")]
-    {
-        println!("  query_engine_v2: enabled in this build");
-        let tail = crate::agent::query_engine::drain_diagnostics();
-        if tail.is_empty() {
-            println!("  (no recorded transitions since process start)");
-        } else {
-            println!("  Recent transitions (oldest → newest, capped):");
-            for t in tail {
-                println!("    - {:?}: {:?}", t.reason, t.detail);
-            }
+    let tail = crate::agent::query_engine::drain_diagnostics();
+    if tail.is_empty() {
+        println!("  (no recorded transitions since process start)");
+    } else {
+        println!("  Recent transitions (oldest → newest, capped):");
+        for t in tail {
+            println!("    - {:?}: {:?}", t.reason, t.detail);
         }
-    }
-    #[cfg(not(feature = "query_engine_v2"))]
-    {
-        println!("  query_engine_v2: disabled in this build");
-        println!("  Rebuild with: cargo build --features query_engine_v2");
     }
     Ok(())
 }
