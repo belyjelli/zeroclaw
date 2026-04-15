@@ -48,6 +48,47 @@ pub fn drain_diagnostics() -> Vec<TurnTransition> {
         .collect()
 }
 
+/// Last system prompt assembly stats (in-process), for `zeroclaw doctor query-engine`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SystemPromptAssemblyDiag {
+    pub static_tokens_est: u32,
+    pub dynamic_tokens_est: u32,
+    pub static_prefix_cached: bool,
+}
+
+static LAST_SYSTEM_PROMPT_ASSEMBLY: LazyLock<Mutex<Option<SystemPromptAssemblyDiag>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+/// Record approximate token counts (`chars / 4`) and whether the memoized static prefix was reused.
+pub fn record_system_prompt_assembly(
+    static_tokens_est: u32,
+    dynamic_tokens_est: u32,
+    static_prefix_cached: bool,
+) {
+    tracing::info!(
+        static_tokens_est,
+        dynamic_tokens_est,
+        static_prefix_cached,
+        "System prompt assembled — static approx tokens, dynamic approx tokens, static prefix memo hit"
+    );
+    let mut g = LAST_SYSTEM_PROMPT_ASSEMBLY
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    *g = Some(SystemPromptAssemblyDiag {
+        static_tokens_est,
+        dynamic_tokens_est,
+        static_prefix_cached,
+    });
+}
+
+#[must_use]
+pub fn last_system_prompt_assembly() -> Option<SystemPromptAssemblyDiag> {
+    LAST_SYSTEM_PROMPT_ASSEMBLY
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+}
+
 /// Heuristic: model may have stopped early due to output token cap — caller may append a nudge.
 #[must_use]
 pub fn should_request_token_continuation(
@@ -93,6 +134,7 @@ pub(crate) async fn run_query_loop(
     tool_result_offload: &crate::config::ToolResultOffloadConfig,
     history_pruning: &crate::agent::history_pruner::HistoryPrunerConfig,
     turn_user_message: Option<&str>,
+    system_prompt_refresh: Option<&super::system_prompt::SystemPromptAssemblyRefs<'_>>,
 ) -> Result<String> {
     state.last_transition = Some(TransitionReason::BeginTurn);
     record_transition(TransitionReason::BeginTurn, None);
@@ -120,6 +162,7 @@ pub(crate) async fn run_query_loop(
         pacing,
         tool_result_offload,
         history_pruning,
+        system_prompt_refresh,
     )
     .await;
     match &res {

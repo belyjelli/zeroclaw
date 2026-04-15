@@ -74,7 +74,7 @@ zeroclaw/
 
 | Module | Key Files | Role |
 |---|---|---|
-| `agent/` | `agent.rs`, `loop_.rs` (5.6k), `dispatcher.rs`, `prompt.rs`, `classifier.rs`, `memory_loader.rs` | **The brain.** `AgentBuilder` composes provider+tools+memory+observer. `loop_.rs` runs the multi-turn tool-calling loop. Dispatcher handles native vs XML tool call parsing. Classifier routes queries to different models. |
+| `agent/` | `agent.rs`, `loop_.rs` (5.6k), `system_prompt.rs`, `dispatcher.rs`, `prompt.rs`, `classifier.rs`, `memory_loader.rs` | **The brain.** `AgentBuilder` composes provider+tools+memory+observer. `system_prompt.rs` assembles the workspace system prompt (static vs dynamic; boundary marker for provider-side caching). `channels/mod.rs` delegates `build_system_prompt_*` here; `loop_.rs` can re-patch the first system message after compaction when callers pass `system_prompt_refresh`. Dispatcher handles native vs XML tool call parsing. Classifier routes queries to different models. |
 | `config/` | `schema.rs` (7.6k), `mod.rs`, `traits.rs` | **All configuration structs.** Every subsystem's config lives in `schema.rs` — providers, channels, memory, security, gateway, tools, hardware, scheduling, etc. Loaded from TOML. |
 | `runtime/` | `native.rs`, `docker.rs`, `wasm.rs`, `traits.rs` | **Platform adapters.** `RuntimeAdapter` trait abstracts shell access, filesystem, storage paths, memory budgets. Native = direct OS. Docker = container isolation. WASM = experimental. |
 

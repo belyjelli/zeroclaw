@@ -39,7 +39,7 @@ Key extension points:
 - `src/main.rs` — CLI entrypoint and command routing
 - `src/lib.rs` — module exports and shared command enums
 - `src/config/` — schema + config loading/merging
-- `src/agent/` — orchestration: `loop_.rs` (`run_tool_call_loop` / `run_tool_call_loop_body`), `query_engine.rs` (`run_query_loop`: diagnostics + post-turn hooks), `state.rs` / `compaction_pipeline.rs` / `stop_hooks.rs`, `agent.rs` (gateway/interactive `Agent`), `session_transcript.rs`
+- `src/agent/` — orchestration: `system_prompt.rs` (workspace system prompt assembly; static/dynamic + cache boundary), `loop_.rs` (`run_tool_call_loop` / `run_tool_call_loop_body`), `query_engine.rs` (`run_query_loop`: diagnostics + post-turn hooks + last system-prompt assembly stats), `state.rs` / `compaction_pipeline.rs` / `stop_hooks.rs`, `agent.rs` (gateway/interactive `Agent`), `session_transcript.rs`
 - `src/gateway/` — webhook/gateway server; `AppState` holds optional `hooks` (`HookRunner`) shared with WebSocket `Agent` (`from_config_with_hooks`)
 - `src/security/` — policy, pairing, secret store
 - `src/memory/` — markdown/sqlite memory backends + embeddings/vector merge

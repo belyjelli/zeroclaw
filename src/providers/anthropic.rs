@@ -478,13 +478,39 @@ impl AnthropicProvider {
             }
         }
 
-        // Always use Blocks format with cache_control for system prompts
+        // Split static vs dynamic on ZeroClaw boundary marker for prompt caching.
         let system_prompt = system_text.map(|text| {
-            SystemPrompt::Blocks(vec![SystemBlock {
-                block_type: "text".to_string(),
-                text,
-                cache_control: Some(CacheControl::ephemeral()),
-            }])
+            use crate::agent::system_prompt::SYSTEM_PROMPT_DYNAMIC_BOUNDARY;
+            if let Some(idx) = text.find(SYSTEM_PROMPT_DYNAMIC_BOUNDARY) {
+                let static_part = text[..idx].to_string();
+                let dynamic_part = text[idx + SYSTEM_PROMPT_DYNAMIC_BOUNDARY.len()..].to_string();
+                if static_part.is_empty() {
+                    return SystemPrompt::Blocks(vec![SystemBlock {
+                        block_type: "text".to_string(),
+                        text,
+                        cache_control: Some(CacheControl::ephemeral()),
+                    }]);
+                }
+                let mut blocks = vec![SystemBlock {
+                    block_type: "text".to_string(),
+                    text: static_part,
+                    cache_control: Some(CacheControl::ephemeral()),
+                }];
+                if !dynamic_part.is_empty() {
+                    blocks.push(SystemBlock {
+                        block_type: "text".to_string(),
+                        text: dynamic_part,
+                        cache_control: None,
+                    });
+                }
+                SystemPrompt::Blocks(blocks)
+            } else {
+                SystemPrompt::Blocks(vec![SystemBlock {
+                    block_type: "text".to_string(),
+                    text,
+                    cache_control: Some(CacheControl::ephemeral()),
+                }])
+            }
         });
 
         (system_prompt, native_messages)
@@ -1305,6 +1331,29 @@ mod tests {
             SystemPrompt::String(_) => {
                 panic!("Expected Blocks variant with cache_control for small prompt")
             }
+        }
+    }
+
+    #[test]
+    fn convert_messages_splits_system_on_dynamic_boundary() {
+        use crate::agent::system_prompt::SYSTEM_PROMPT_DYNAMIC_BOUNDARY;
+        let messages = vec![ChatMessage {
+            role: "system".to_string(),
+            content: format!(
+                "STATIC_PART{}DYNAMIC_TAIL",
+                SYSTEM_PROMPT_DYNAMIC_BOUNDARY
+            ),
+        }];
+        let (system_prompt, _) = AnthropicProvider::convert_messages(&messages);
+        match system_prompt.unwrap() {
+            SystemPrompt::Blocks(blocks) => {
+                assert_eq!(blocks.len(), 2);
+                assert_eq!(blocks[0].text, "STATIC_PART");
+                assert!(blocks[0].cache_control.is_some());
+                assert_eq!(blocks[1].text, "DYNAMIC_TAIL");
+                assert!(blocks[1].cache_control.is_none());
+            }
+            SystemPrompt::String(_) => panic!("Expected Blocks variant"),
         }
     }
 

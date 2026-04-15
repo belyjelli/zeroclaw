@@ -137,6 +137,18 @@ pub fn run(config: &Config) -> Result<()> {
 pub fn run_query_engine() -> Result<()> {
     println!("QueryEngine diagnostics");
     println!();
+    match crate::agent::query_engine::last_system_prompt_assembly() {
+        Some(d) => {
+            println!(
+                "  Static prefix (last assembly): memo cache hit: {} (est. static {} tokens, dynamic {} tokens)",
+                if d.static_prefix_cached { "yes" } else { "no" },
+                d.static_tokens_est,
+                d.dynamic_tokens_est
+            );
+        }
+        None => println!("  Static prefix (last assembly): n/a (no assembly recorded in-process)"),
+    }
+    println!();
     let tail = crate::agent::query_engine::drain_diagnostics();
     if tail.is_empty() {
         println!("  (no recorded transitions since process start)");

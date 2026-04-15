@@ -49,6 +49,7 @@ ZeroClaw 常见扩展和修改模式的分步指南。
 
 - **单一工具路径：** `src/agent/loop_.rs` 中的 `run_tool_call_loop` 始终经 `src/agent/query_engine.rs` 的 `run_query_loop` 进入，后者记录 [`TransitionReason`](../../../../src/agent/state.rs) 诊断信息，并在成功结束时运行**并行 + 阻塞**的回合后钩子（`src/agent/stop_hooks.rs`）。**没有** `query_engine_v2` Cargo 特性；该路径始终开启。
 - **压缩：** LLM 调用前的裁剪使用 `src/agent/compaction_pipeline.rs`（命名阶段 + `history_pruner`）；从循环接入的上下文类重试使用同一模块的辅助函数。
+- **系统提示：** 规范组装位于 `src/agent/system_prompt.rs`（可记忆化的静态前缀 + 易变尾部；`__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__` 用于分段）。`src/channels/mod.rs` 的 `build_system_prompt_*` 转发至此；部分路径向 `run_tool_call_loop` 传入 `system_prompt_refresh`，使 `src/agent/loop_.rs` 在 `run_pre_llm_phases` 之后更新 `history[0]`。`src/providers/anthropic.rs` 按该标记拆成两个 system 块以支持提示缓存。进程内统计：`crate::agent::query_engine::last_system_prompt_assembly` 与 `zeroclaw doctor query-engine`。
 - **转录优先：** 会话 JSONL 的用户行应在模型工作之前于编排边界通过 `session_transcript::commit_user_turn` 落盘（渠道与 `Agent::turn` / `turn_streamed` 遵循此模式）。
 - **钩子运行器构建：** `crate::hooks::hook_runner_from_config`（`src/hooks/mod.rs`）在 `[hooks].enabled` 时注册内置钩子；只要 `memory.auto_save` 为 true 即注册 **`MemoryConsolidationHook`**（即使钩子总开关关闭），从而避免在渠道侧重复 `tokio::spawn` 合并逻辑。
 - **网关：** 在 `run_gateway` 中构建 `HookRunner`，存入 `AppState.hooks`，并将 `state.hooks.clone()` 传入 `Agent::from_config_with_hooks`，使 `/ws/chat` 的回合后钩子与渠道行为一致。

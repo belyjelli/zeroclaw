@@ -2,7 +2,7 @@ use crate::agent::dispatcher::{
     NativeToolDispatcher, ParsedToolCall, ToolDispatcher, ToolExecutionResult, XmlToolDispatcher,
 };
 use crate::agent::memory_loader::{DefaultMemoryLoader, MemoryLoader};
-use crate::agent::prompt::{PromptContext, SystemPromptBuilder};
+use crate::agent::prompt::SystemPromptBuilder;
 use crate::config::Config;
 use crate::hooks::HookRunner;
 use crate::i18n::ToolDescriptions;
@@ -640,41 +640,52 @@ impl Agent {
     }
 
     fn build_system_prompt(&self) -> Result<String> {
+        let mut tool_pairs = Vec::with_capacity(self.tools.len());
+        for tool in &self.tools {
+            let desc = self
+                .tool_descriptions
+                .as_ref()
+                .and_then(|td| td.get(tool.name()))
+                .map(str::to_string)
+                .unwrap_or_else(|| tool.description().to_string());
+            tool_pairs.push((tool.name().to_string(), desc));
+        }
+        let tool_refs: Vec<(&str, &str)> = tool_pairs
+            .iter()
+            .map(|(n, d)| (n.as_str(), d.as_str()))
+            .collect();
+        let autonomy = crate::config::AutonomyConfig {
+            level: self.autonomy_level,
+            ..Default::default()
+        };
         let instructions = self.tool_dispatcher.prompt_instructions(&self.tools);
-        let ctx = PromptContext {
+        let user_zeroclaw = crate::context::default_user_zeroclaw_dir();
+        let paths = crate::context::DynamicContextPaths {
+            global_config_dir: None,
+            user_config_dir: user_zeroclaw.as_deref(),
+            session_dir: None,
+        };
+        let ctx = crate::agent::system_prompt::PromptAssemblyContext {
             workspace_dir: &self.workspace_dir,
             model_name: &self.model_name,
-            tools: &self.tools,
+            tools: tool_refs.as_slice(),
             skills: &self.skills,
-            skills_prompt_mode: self.skills_prompt_mode,
             identity_config: Some(&self.identity_config),
-            dispatcher_instructions: &instructions,
-            tool_descriptions: self.tool_descriptions.as_ref(),
-            security_summary: self.security_summary.clone(),
-            autonomy_level: self.autonomy_level,
+            bootstrap_max_chars: None,
+            autonomy_config: Some(&autonomy),
+            native_tools: self.provider.supports_native_tools(),
+            skills_prompt_mode: self.skills_prompt_mode,
+            compact_context: self.config.compact_context,
+            max_system_prompt_chars: self.config.max_system_prompt_chars,
+            dynamic_context: Some(&self.config.dynamic_context),
+            dynamic_paths: paths,
+            static_suffix: "",
+            dispatcher_instructions: Some(instructions.as_str()),
+            security_summary: self.security_summary.as_deref(),
+            include_channel_media: true,
         };
-        let mut out = self.prompt_builder.build(&ctx)?;
-        if self.config.dynamic_context.enabled {
-            let user_zeroclaw = crate::context::default_user_zeroclaw_dir();
-            let paths = crate::context::DynamicContextPaths {
-                global_config_dir: None,
-                user_config_dir: user_zeroclaw.as_deref(),
-                session_dir: None,
-            };
-            match crate::context::format_dynamic_context_block(
-                &self.config.dynamic_context,
-                &self.workspace_dir,
-                paths,
-            ) {
-                Ok(block) if !block.trim().is_empty() => {
-                    out.push_str("\n\n");
-                    out.push_str(&block);
-                }
-                Err(e) => tracing::debug!(error = %e, "dynamic context assembly skipped"),
-                _ => {}
-            }
-        }
-        Ok(out)
+        let sp = crate::agent::system_prompt::assemble_once(&ctx)?;
+        Ok(sp.full())
     }
 
     async fn execute_tool_call(&self, call: &ParsedToolCall) -> ToolExecutionResult {

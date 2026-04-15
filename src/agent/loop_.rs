@@ -2379,6 +2379,7 @@ pub(crate) async fn agent_turn(
         &crate::config::ToolResultOffloadConfig::default(),
         &crate::agent::history_pruner::HistoryPrunerConfig::default(),
         None,
+        None,
     )
     .await
 }
@@ -2691,6 +2692,7 @@ pub(crate) async fn run_tool_call_loop(
     tool_result_offload: &crate::config::ToolResultOffloadConfig,
     history_pruning: &crate::agent::history_pruner::HistoryPrunerConfig,
     turn_user_message: Option<&str>,
+    system_prompt_refresh: Option<&crate::agent::system_prompt::SystemPromptAssemblyRefs<'_>>,
 ) -> Result<String> {
     let mut engine_state = crate::agent::state::EngineState::default();
     crate::agent::query_engine::run_query_loop(
@@ -2719,6 +2721,7 @@ pub(crate) async fn run_tool_call_loop(
         tool_result_offload,
         history_pruning,
         turn_user_message,
+        system_prompt_refresh,
     )
     .await
 }
@@ -2749,12 +2752,15 @@ pub(crate) async fn run_tool_call_loop_body(
     pacing: &crate::config::PacingConfig,
     tool_result_offload: &crate::config::ToolResultOffloadConfig,
     history_pruning: &crate::agent::history_pruner::HistoryPrunerConfig,
+    system_prompt_refresh: Option<&crate::agent::system_prompt::SystemPromptAssemblyRefs<'_>>,
 ) -> Result<String> {
     let max_iterations = if max_tool_iterations == 0 {
         DEFAULT_MAX_TOOL_ITERATIONS
     } else {
         max_tool_iterations
     };
+
+    let mut system_prompt_assembly_memo = crate::agent::system_prompt::AssemblyMemo::default();
 
     let turn_id = Uuid::new_v4().to_string();
     let loop_started_at = Instant::now();
@@ -2834,6 +2840,31 @@ pub(crate) async fn run_tool_call_loop_body(
             }
         }
         let use_native_tools = provider.supports_native_tools() && !tool_specs.is_empty();
+
+        if let Some(refs) = system_prompt_refresh {
+            let mut static_suffix = String::new();
+            if !use_native_tools {
+                static_suffix.push_str(&build_tool_instructions(
+                    tools_registry,
+                    Some(refs.i18n_descs),
+                ));
+            }
+            if !refs.deferred_section.is_empty() {
+                if !static_suffix.is_empty() {
+                    static_suffix.push('\n');
+                }
+                static_suffix.push_str(refs.deferred_section);
+            }
+            if let Err(e) = crate::agent::system_prompt::patch_history_system_prompt(
+                &mut system_prompt_assembly_memo,
+                refs,
+                use_native_tools,
+                &static_suffix,
+                history,
+            ) {
+                tracing::warn!(error = %e, "system prompt refresh skipped");
+            }
+        }
 
         let image_marker_count = multimodal::count_image_markers(history);
 
@@ -4237,6 +4268,33 @@ pub async fn run(
         #[allow(unused_assignments)]
         let mut response = String::new();
         loop {
+            let user_zeroclaw_assembly = crate::context::default_user_zeroclaw_dir();
+            let assembly_dynamic_paths = crate::context::DynamicContextPaths {
+                global_config_dir: None,
+                user_config_dir: user_zeroclaw_assembly.as_deref(),
+                session_dir: None,
+            };
+            let assembly_refs_single = crate::agent::system_prompt::SystemPromptAssemblyRefs {
+                workspace_dir: config.workspace_dir.as_path(),
+                model_name: model_name.clone(),
+                tool_descs: tool_descs.as_slice(),
+                skills: skills.as_slice(),
+                identity_config: Some(&config.identity),
+                bootstrap_max_chars: if config.agent.compact_context {
+                    Some(6000)
+                } else {
+                    None
+                },
+                autonomy_config: Some(&config.autonomy),
+                skills_prompt_mode: config.skills.prompt_injection_mode,
+                compact_context: config.agent.compact_context,
+                max_system_prompt_chars: config.agent.max_system_prompt_chars,
+                dynamic_context: Some(&config.agent.dynamic_context),
+                dynamic_paths: assembly_dynamic_paths,
+                i18n_descs: &i18n_descs,
+                deferred_section: deferred_section.as_str(),
+                thinking_prefix: thinking_params.system_prompt_prefix.as_deref(),
+            };
             match crate::agent::session_transcript::SESSION_TRANSCRIPT_CONTEXT
                 .scope(
                     Some(crate::agent::session_transcript::SessionTranscriptScope {
@@ -4268,6 +4326,7 @@ pub async fn run(
                         &config.agent.tool_result_offload,
                         &config.agent.history_pruning,
                         Some(effective_msg.as_str()),
+                        Some(&assembly_refs_single),
                     ),
                 )
                 .await
@@ -4535,6 +4594,33 @@ pub async fn run(
             );
 
             let response = loop {
+                let user_zeroclaw_assembly = crate::context::default_user_zeroclaw_dir();
+                let assembly_dynamic_paths = crate::context::DynamicContextPaths {
+                    global_config_dir: None,
+                    user_config_dir: user_zeroclaw_assembly.as_deref(),
+                    session_dir: None,
+                };
+                let assembly_refs_session = crate::agent::system_prompt::SystemPromptAssemblyRefs {
+                    workspace_dir: config.workspace_dir.as_path(),
+                    model_name: model_name.clone(),
+                    tool_descs: tool_descs.as_slice(),
+                    skills: skills.as_slice(),
+                    identity_config: Some(&config.identity),
+                    bootstrap_max_chars: if config.agent.compact_context {
+                        Some(6000)
+                    } else {
+                        None
+                    },
+                    autonomy_config: Some(&config.autonomy),
+                    skills_prompt_mode: config.skills.prompt_injection_mode,
+                    compact_context: config.agent.compact_context,
+                    max_system_prompt_chars: config.agent.max_system_prompt_chars,
+                    dynamic_context: Some(&config.agent.dynamic_context),
+                    dynamic_paths: assembly_dynamic_paths,
+                    i18n_descs: &i18n_descs,
+                    deferred_section: deferred_section.as_str(),
+                    thinking_prefix: thinking_params.system_prompt_prefix.as_deref(),
+                };
                 match crate::agent::session_transcript::SESSION_TRANSCRIPT_CONTEXT
                     .scope(
                         Some(crate::agent::session_transcript::SessionTranscriptScope {
@@ -4566,6 +4652,7 @@ pub async fn run(
                             &config.agent.tool_result_offload,
                             &config.agent.history_pruning,
                             Some(effective_input.as_str()),
+                            Some(&assembly_refs_session),
                         ),
                     )
                     .await
@@ -5575,6 +5662,7 @@ mod tests {
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
+            None,
         )
         .await
         .expect_err("provider without vision support should fail");
@@ -5630,6 +5718,7 @@ mod tests {
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
+            None,
         )
         .await
         .expect_err("oversized payload must fail");
@@ -5678,6 +5767,7 @@ mod tests {
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
+            None,
         )
         .await
         .expect("valid multimodal payload should pass");
@@ -5725,6 +5815,7 @@ mod tests {
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
             None,
         )
         .await
@@ -5781,6 +5872,7 @@ mod tests {
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
+            None,
         )
         .await
         .expect_err("should fail when vision provider cannot be created");
@@ -5835,6 +5927,7 @@ mod tests {
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
             None,
         )
         .await
@@ -5892,6 +5985,7 @@ mod tests {
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
+            None,
         )
         .await
         .expect_err("should fail due to nonexistent vision provider");
@@ -5946,6 +6040,7 @@ mod tests {
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
+            None,
         )
         .await
         .expect("empty image markers should not trigger vision routing");
@@ -5999,6 +6094,7 @@ mod tests {
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
             None,
         )
         .await
@@ -6137,6 +6233,7 @@ mod tests {
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
+            None,
         )
         .await
         .expect("parallel execution should complete");
@@ -6211,6 +6308,7 @@ mod tests {
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
+            None,
         )
         .await
         .expect("cron_add delivery defaults should be injected");
@@ -6277,6 +6375,7 @@ mod tests {
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
+            None,
         )
         .await
         .expect("explicit delivery mode should be preserved");
@@ -6337,6 +6436,7 @@ mod tests {
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
             None,
         )
         .await
@@ -6411,6 +6511,7 @@ mod tests {
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
+            None,
         )
         .await
         .expect("non-interactive shell should succeed for low-risk command");
@@ -6474,6 +6575,7 @@ mod tests {
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
             None,
         )
         .await
@@ -6559,6 +6661,7 @@ mod tests {
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
+            None,
         )
         .await
         .expect("loop should complete");
@@ -6619,6 +6722,7 @@ mod tests {
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
             None,
         )
         .await
@@ -6704,6 +6808,7 @@ mod tests {
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
             None,
         )
         .await
@@ -8700,6 +8805,7 @@ Let me check the result."#;
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
             None,
+            None,
         )
         .await
         .expect("tool loop should complete");
@@ -8853,6 +8959,7 @@ Let me check the result."#;
                     &crate::config::ToolResultOffloadConfig::default(),
                     &crate::agent::history_pruner::HistoryPrunerConfig::default(),
                     None,
+                    None,
                 ),
             )
             .await
@@ -8935,6 +9042,7 @@ Let me check the result."#;
                     &crate::config::ToolResultOffloadConfig::default(),
                     &crate::agent::history_pruner::HistoryPrunerConfig::default(),
                     None,
+                    None,
                 ),
             )
             .await
@@ -8992,6 +9100,7 @@ Let me check the result."#;
             &crate::config::PacingConfig::default(),
             &crate::config::ToolResultOffloadConfig::default(),
             &crate::agent::history_pruner::HistoryPrunerConfig::default(),
+            None,
             None,
         )
         .await

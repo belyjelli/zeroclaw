@@ -74,7 +74,7 @@ zeroclaw/
 
 | 模块 | 关键文件 | 角色 |
 |---|---|---|
-| `agent/` | `agent.rs`、`loop_.rs` (5.6k)、`dispatcher.rs`、`prompt.rs`、`classifier.rs`、`memory_loader.rs` | **大脑。** `AgentBuilder` 组合提供商+工具+内存+观察者。`loop_.rs` 运行多轮工具调用循环。分发器处理原生与 XML 工具调用解析。分类器将查询路由到不同模型。 |
+| `agent/` | `agent.rs`、`loop_.rs` (5.6k)、`system_prompt.rs`、`dispatcher.rs`、`prompt.rs`、`classifier.rs`、`memory_loader.rs` | **大脑。** `AgentBuilder` 组合提供商+工具+内存+观察者。`system_prompt.rs` 组装工作区系统提示（静态与动态分段；边界标记供提供商侧缓存）。`channels/mod.rs` 的 `build_system_prompt_*` 转发至此；调用方传入 `system_prompt_refresh` 时，`loop_.rs` 可在压缩后重写首条 system 消息。分发器处理原生与 XML 工具调用解析。分类器将查询路由到不同模型。 |
 | `config/` | `schema.rs` (7.6k)、`mod.rs`、`traits.rs` | **所有配置结构体。** 每个子系统的配置都位于 `schema.rs` 中 —— 提供商、渠道、内存、安全、网关、工具、硬件、调度等。从 TOML 文件加载。 |
 | `runtime/` | `native.rs`、`docker.rs`、`wasm.rs`、`traits.rs` | **平台适配器。** `RuntimeAdapter` 特征抽象了 shell 访问、文件系统、存储路径、内存预算。原生模式 = 直接访问操作系统。Docker 模式 = 容器隔离。WASM 模式 = 实验性支持。 |
 
