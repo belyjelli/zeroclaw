@@ -1,10 +1,10 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Send, Bot, User, AlertCircle, Copy, Check } from 'lucide-react';
 import type { WsMessage } from '@/types/api';
 import { WebSocketClient } from '@/lib/ws';
 import { generateUUID } from '@/lib/uuid';
 import { useDraft } from '@/hooks/useDraft';
-import { getChatSlashCommands } from '@/lib/api';
+import { getChatSlashCommands, type ChatSlashCommand } from '@/lib/api';
 import { t } from '@/lib/i18n';
 
 interface ChatMessage {
@@ -15,6 +15,24 @@ interface ChatMessage {
 }
 
 const DRAFT_KEY = 'agent-chat';
+
+/** Mirrors `slash_command_catalog` in `src/gateway/chat_slash.rs` for offline / API-failure UX. */
+const FALLBACK_SLASH_COMMANDS: ChatSlashCommand[] = [
+  { name: '/new', description: 'Clear this chat session and start fresh' },
+  { name: '/reset', description: 'Same as /new' },
+  { name: '/models', description: 'List providers or /models <provider> to switch' },
+  { name: '/model', description: 'Show models or /model <id> to switch' },
+  { name: '/config', description: 'Show current provider, model, and routes' },
+];
+
+/** Token from last whitespace (or line start) to cursor, for gateway-style slash commands. */
+function getSlashToken(value: string, cursor: number): { token: string; tokenStart: number } | null {
+  const before = value.slice(0, cursor);
+  const m = before.match(/(?:^|\s)(\S*)$/);
+  const token = m?.[1];
+  if (token === undefined || !token.startsWith('/')) return null;
+  return { token, tokenStart: before.length - token.length };
+}
 
 export default function AgentChat() {
   const { draft, saveDraft, clearDraft } = useDraft(DRAFT_KEY);
@@ -30,7 +48,50 @@ export default function AgentChat() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const pendingContentRef = useRef('');
   const [streamingContent, setStreamingContent] = useState('');
-  const [slashHint, setSlashHint] = useState(() => t('agent.slash_hint'));
+  const [slashCommands, setSlashCommands] = useState<ChatSlashCommand[]>([]);
+  const [caretPos, setCaretPos] = useState(() => draft.length);
+  const [slashActiveIndex, setSlashActiveIndex] = useState(0);
+  const [slashPickerSuppressed, setSlashPickerSuppressed] = useState(false);
+  const prevSlashTokenLenRef = useRef(0);
+
+  const slashHintLine = useMemo(() => {
+    if (slashCommands.length === 0) return t('agent.slash_hint');
+    return slashCommands.map((c) => `${c.name}: ${c.description}`).join(' · ');
+  }, [slashCommands]);
+
+  const slashSuggestionState = useMemo(() => {
+    const info = getSlashToken(input, caretPos);
+    if (!info || slashCommands.length === 0) {
+      return { suggestions: [] as ChatSlashCommand[], token: '', tokenStart: 0 };
+    }
+    const q = info.token.toLowerCase();
+    const suggestions = slashCommands.filter((c) => c.name.toLowerCase().startsWith(q));
+    return { suggestions, token: info.token, tokenStart: info.tokenStart };
+  }, [input, caretPos, slashCommands]);
+
+  useEffect(() => {
+    const info = getSlashToken(input, caretPos);
+    if (info === null) {
+      setSlashPickerSuppressed(false);
+      prevSlashTokenLenRef.current = 0;
+      return;
+    }
+    const len = info.token.length;
+    if (len < prevSlashTokenLenRef.current) {
+      setSlashPickerSuppressed(false);
+    }
+    prevSlashTokenLenRef.current = len;
+  }, [input, caretPos]);
+
+  useEffect(() => {
+    const n = slashSuggestionState.suggestions.length;
+    setSlashActiveIndex((idx) => (n === 0 ? 0 : Math.min(idx, n - 1)));
+  }, [slashSuggestionState.suggestions.length]);
+
+  const showSlashPicker =
+    connected &&
+    !slashPickerSuppressed &&
+    slashSuggestionState.suggestions.length > 0;
 
   // Persist draft to in-memory store so it survives route changes
   useEffect(() => {
@@ -156,16 +217,39 @@ export default function AgentChat() {
       try {
         const data = await getChatSlashCommands();
         if (cancelled) return;
-        const line = data.commands.map((c) => `${c.name}: ${c.description}`).join(' · ');
-        setSlashHint(line);
+        setSlashCommands(data.commands.length > 0 ? data.commands : FALLBACK_SLASH_COMMANDS);
       } catch {
-        if (!cancelled) setSlashHint(t('agent.slash_hint'));
+        if (!cancelled) setSlashCommands(FALLBACK_SLASH_COMMANDS);
       }
     })();
     return () => {
       cancelled = true;
     };
   }, [connected]);
+
+  const applySlashCompletion = useCallback(
+    (cmd: ChatSlashCommand) => {
+      const el = inputRef.current;
+      if (!el) return;
+      const cursor = el.selectionStart ?? input.length;
+      const info = getSlashToken(input, cursor);
+      if (!info) return;
+      const beforeSlice = input.slice(0, info.tokenStart);
+      const afterSlice = input.slice(cursor);
+      const newValue = beforeSlice + cmd.name + afterSlice;
+      const newPos = beforeSlice.length + cmd.name.length;
+      setInput(newValue);
+      setSlashPickerSuppressed(true);
+      queueMicrotask(() => {
+        el.focus();
+        el.setSelectionRange(newPos, newPos);
+        setCaretPos(newPos);
+        el.style.height = 'auto';
+        el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+      });
+    },
+    [input],
+  );
 
   const handleSend = () => {
     const trimmed = input.trim();
@@ -197,15 +281,45 @@ export default function AgentChat() {
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const suggestions = slashSuggestionState.suggestions;
+    if (showSlashPicker && suggestions.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSlashActiveIndex((i) => Math.min(i + 1, suggestions.length - 1));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSlashActiveIndex((i) => Math.max(i - 1, 0));
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setSlashPickerSuppressed(true);
+        return;
+      }
+      if ((e.key === 'Enter' || e.key === 'Tab') && !e.shiftKey) {
+        e.preventDefault();
+        const cmd = suggestions[slashActiveIndex] ?? suggestions[0];
+        if (cmd) applySlashCompletion(cmd);
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
   };
 
+  const syncCaret = () => {
+    const el = inputRef.current;
+    if (el) setCaretPos(el.selectionStart);
+  };
+
   const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value);
+    setCaretPos(e.target.selectionStart ?? e.target.value.length);
     e.target.style.height = 'auto';
     e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
   };
@@ -348,17 +462,58 @@ export default function AgentChat() {
       {/* Input area */}
       <div className="border-t p-4" style={{ borderColor: 'var(--pc-border)', background: 'var(--pc-bg-surface)' }}>
         <div className="flex items-center gap-3 max-w-4xl mx-auto">
-          <textarea
-            ref={inputRef}
-            rows={1}
-            value={input}
-            onChange={handleTextareaChange}
-            onKeyDown={handleKeyDown}
-            placeholder={connected ? t('agent.type_message') : t('agent.connecting')}
-            disabled={!connected}
-            className="input-electric flex-1 px-4 text-sm resize-none disabled:opacity-40"
-            style={{ minHeight: '44px', maxHeight: '200px', paddingTop: '10px', paddingBottom: '10px' }}
-          />
+          <div className="relative flex-1 min-w-0">
+            {showSlashPicker && (
+              <ul
+                role="listbox"
+                aria-label={t('agent.slash_suggestions_aria')}
+                className="absolute left-0 right-0 bottom-full mb-1 z-20 max-h-48 overflow-y-auto rounded-xl border py-1 shadow-lg"
+                style={{
+                  background: 'var(--pc-bg-elevated)',
+                  borderColor: 'var(--pc-border)',
+                  boxShadow: '0 -8px 24px rgba(0,0,0,0.12)',
+                }}
+              >
+                {slashSuggestionState.suggestions.map((cmd, idx) => (
+                  <li key={cmd.name} role="presentation">
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={idx === slashActiveIndex}
+                      className="w-full text-left px-3 py-2 text-sm flex flex-col gap-0.5 transition-colors"
+                      style={{
+                        background: idx === slashActiveIndex ? 'var(--pc-accent-glow)' : 'transparent',
+                        color: 'var(--pc-text-primary)',
+                      }}
+                      onMouseEnter={() => setSlashActiveIndex(idx)}
+                      onMouseDown={(ev) => {
+                        ev.preventDefault();
+                        applySlashCompletion(cmd);
+                      }}
+                    >
+                      <span className="font-mono font-medium">{cmd.name}</span>
+                      <span className="text-[11px] leading-snug" style={{ color: 'var(--pc-text-muted)' }}>
+                        {cmd.description}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <textarea
+              ref={inputRef}
+              rows={1}
+              value={input}
+              onChange={handleTextareaChange}
+              onKeyDown={handleKeyDown}
+              onSelect={syncCaret}
+              onClick={syncCaret}
+              placeholder={connected ? t('agent.type_message') : t('agent.connecting')}
+              disabled={!connected}
+              className="input-electric w-full px-4 text-sm resize-none disabled:opacity-40"
+              style={{ minHeight: '44px', maxHeight: '200px', paddingTop: '10px', paddingBottom: '10px' }}
+            />
+          </div>
           <button
             type='button'
             onClick={handleSend}
@@ -385,7 +540,7 @@ export default function AgentChat() {
           className="text-center text-[10px] mt-2 max-w-4xl mx-auto leading-relaxed px-2"
           style={{ color: 'var(--pc-text-faint)' }}
         >
-          {slashHint}
+          {slashHintLine}
         </p>
       </div>
     </div>

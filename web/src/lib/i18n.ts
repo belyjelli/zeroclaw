@@ -62,6 +62,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'agent.disconnected_status': '已断开',
     'agent.slash_hint':
       '斜杠命令：/new 或 /reset 清空会话 · /models 列出或切换提供商 · /model 查看或切换模型 · /config 当前路由',
+    'agent.slash_suggestions_aria': '斜杠命令建议',
 
     // Tools
     'tools.title': '可用工具',
@@ -395,6 +396,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'agent.disconnected_status': 'Disconnected',
     'agent.slash_hint':
       'Slash: /new or /reset clear session · /models list or switch provider · /model show or set model · /config current route',
+    'agent.slash_suggestions_aria': 'Slash command suggestions',
 
     // Tools
     'tools.title': 'Available Tools',
@@ -750,6 +752,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'agent.disconnected_status': 'Bağlantı kesildi',
     'agent.slash_hint':
       'Komutlar: /new veya /reset oturumu temizler · /models sağlayıcı · /model model · /config rota',
+    'agent.slash_suggestions_aria': 'Eğik çizgi komut önerileri',
 
     // Tools
     'tools.title': 'Mevcut Araçlar',
