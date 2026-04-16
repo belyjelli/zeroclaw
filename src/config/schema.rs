@@ -78,6 +78,11 @@ pub struct Config {
     /// (e.g. "/v2/generate" instead of the default "/v1/chat/completions").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_path: Option<String>,
+    /// When `default_provider` is a `custom:https://...` OpenAI-compatible URL, opt into native
+    /// `tools` / `tool_choice` requests. Most self-hosted and proxy endpoints handle these poorly;
+    /// the default is off (prompt-guided tools). Omit or set `false` unless you verified support.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_tool_calling: Option<bool>,
     /// Default provider ID or alias (e.g. `"openrouter"`, `"ollama"`, `"anthropic"`). Default: `"openrouter"`.
     #[serde(alias = "model_provider")]
     pub default_provider: Option<String>,
@@ -482,6 +487,9 @@ pub struct ModelProviderConfig {
     /// default "/v1/chat/completions"). Only used by OpenAI-compatible / custom providers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_path: Option<String>,
+    /// For profiles that map to `custom:...`, opt into native OpenAI-style tool calling when unset at top level.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_tool_calling: Option<bool>,
     /// Provider protocol variant ("responses" or "chat_completions").
     #[serde(default)]
     pub wire_api: Option<String>,
@@ -8234,6 +8242,7 @@ impl Default for Config {
             api_key: None,
             api_url: None,
             api_path: None,
+            native_tool_calling: None,
             default_provider: Some("openrouter".to_string()),
             default_model: Some("anthropic/claude-sonnet-4.6".to_string()),
             model_providers: HashMap::new(),
@@ -9403,6 +9412,10 @@ impl Config {
                     self.api_path = Some(trimmed.to_string());
                 }
             }
+        }
+
+        if self.native_tool_calling.is_none() {
+            self.native_tool_calling = profile.native_tool_calling;
         }
 
         if profile.requires_openai_auth
@@ -11291,6 +11304,7 @@ default_temperature = 0.7
             api_key: Some("sk-test-key".into()),
             api_url: None,
             api_path: None,
+            native_tool_calling: None,
             default_provider: Some("openrouter".into()),
             default_model: Some("gpt-4o".into()),
             model_providers: HashMap::new(),
@@ -11896,6 +11910,7 @@ default_temperature = 0.7
             api_key: Some("sk-roundtrip".into()),
             api_url: None,
             api_path: None,
+            native_tool_calling: None,
             default_provider: Some("openrouter".into()),
             default_model: Some("test-model".into()),
             model_providers: HashMap::new(),
@@ -13316,6 +13331,7 @@ requires_openai_auth = true
                     azure_openai_deployment: None,
                     azure_openai_api_version: None,
                     api_path: None,
+                    native_tool_calling: None,
                 },
             )]),
             ..Config::default()
@@ -13329,6 +13345,30 @@ requires_openai_auth = true
         assert_eq!(
             config.api_url.as_deref(),
             Some("https://api.tonsof.blue/v1")
+        );
+    }
+
+    #[test]
+    async fn model_provider_profile_propagates_native_tool_calling() {
+        let _env_guard = env_override_lock().await;
+        let mut config = Config {
+            default_provider: Some("myproxy".to_string()),
+            model_providers: HashMap::from([(
+                "myproxy".to_string(),
+                ModelProviderConfig {
+                    base_url: Some("https://api.example.com/v1".to_string()),
+                    native_tool_calling: Some(true),
+                    ..ModelProviderConfig::default()
+                },
+            )]),
+            ..Config::default()
+        };
+
+        config.apply_env_overrides();
+        assert_eq!(config.native_tool_calling, Some(true));
+        assert_eq!(
+            config.default_provider.as_deref(),
+            Some("custom:https://api.example.com/v1")
         );
     }
 
@@ -13348,6 +13388,7 @@ requires_openai_auth = true
                     azure_openai_deployment: None,
                     azure_openai_api_version: None,
                     api_path: None,
+                    native_tool_calling: None,
                 },
             )]),
             api_key: None,
@@ -13448,6 +13489,7 @@ requires_openai_auth = true
                     azure_openai_deployment: None,
                     azure_openai_api_version: None,
                     api_path: None,
+                    native_tool_calling: None,
                 },
             )]),
             ..Config::default()

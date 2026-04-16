@@ -8,6 +8,7 @@
 # api_key = ""
 # api_url = "http://127.0.0.1:11434"
 # api_path = "/v1/chat/completions"
+# native_tool_calling = false  # only for default_provider custom:http(s)://... OpenAI-compatible URLs; default off
 default_provider = "anthropic-custom:https://api.z.ai/api/anthropic"
 default_model = "claude-3-5-sonnet-20241022"
 default_temperature = 0.4
@@ -21,6 +22,7 @@ provider_timeout_secs = 120
 # name = "ollama"
 # base_url = "http://127.0.0.1:11434"
 # api_path = "/v1/chat/completions"
+# native_tool_calling = false  # merged when top-level native_tool_calling is unset (custom OpenAI URLs)
 # wire_api = "chat_completions"
 # requires_openai_auth = false
 # azure_openai_resource = ""

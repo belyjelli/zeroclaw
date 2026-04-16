@@ -697,6 +697,10 @@ pub struct ProviderRuntimeOptions {
     /// Custom API path suffix for OpenAI-compatible providers
     /// (e.g. "/v2/generate" instead of the default "/chat/completions").
     pub api_path: Option<String>,
+    /// When set, overrides native OpenAI-style tool calling for `custom:...` base URLs.
+    /// `None` lets an optional `?native_tool_calling=` query flag apply; if neither is set,
+    /// custom endpoints default to prompt-guided tools (safer for imperfect proxies).
+    pub native_tool_calling: Option<bool>,
 }
 
 impl Default for ProviderRuntimeOptions {
@@ -711,6 +715,7 @@ impl Default for ProviderRuntimeOptions {
             provider_timeout_secs: None,
             extra_headers: std::collections::HashMap::new(),
             api_path: None,
+            native_tool_calling: None,
         }
     }
 }
@@ -728,6 +733,7 @@ pub fn provider_runtime_options_from_config(
         provider_timeout_secs: Some(config.provider_timeout_secs),
         extra_headers: config.extra_headers.clone(),
         api_path: config.api_path.clone(),
+        native_tool_calling: config.native_tool_calling,
     }
 }
 
@@ -1031,6 +1037,73 @@ fn parse_custom_provider_url(
             "{provider_label} requires an http:// or https:// URL. Format: {format_hint}"
         ),
     }
+}
+
+/// Parse a `custom:https://...` URL, strip `native_tool_calling` from the query string (so it
+/// is not forwarded to the upstream API), and return the optional flag for runtime options.
+fn parse_openai_custom_provider_url(
+    raw_url: &str,
+    provider_label: &str,
+    format_hint: &str,
+) -> anyhow::Result<(String, Option<bool>)> {
+    let base_url = raw_url.trim();
+
+    if base_url.is_empty() {
+        anyhow::bail!("{provider_label} requires a URL. Format: {format_hint}");
+    }
+
+    let mut parsed = reqwest::Url::parse(base_url).map_err(|_| {
+        anyhow::anyhow!("{provider_label} requires a valid URL. Format: {format_hint}")
+    })?;
+
+    match parsed.scheme() {
+        "http" | "https" => {}
+        _ => anyhow::bail!(
+            "{provider_label} requires an http:// or https:// URL. Format: {format_hint}"
+        ),
+    }
+
+    let mut native_from_query = None;
+    if parsed.query().is_some() {
+        let pairs: Vec<(String, String)> = parsed
+            .query_pairs()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+        for (k, v) in &pairs {
+            if k == "native_tool_calling" {
+                native_from_query = Some(parse_native_tool_query_value(v));
+            }
+        }
+        let kept: Vec<(String, String)> = pairs
+            .into_iter()
+            .filter(|(k, _)| k != "native_tool_calling")
+            .collect();
+        if kept.is_empty() {
+            parsed.set_query(None);
+        } else {
+            let q = kept
+                .iter()
+                .map(|(k, v)| {
+                    format!(
+                        "{}={}",
+                        urlencoding::encode(k),
+                        urlencoding::encode(v)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("&");
+            parsed.set_query(Some(&q));
+        }
+    }
+
+    Ok((parsed.to_string(), native_from_query))
+}
+
+fn parse_native_tool_query_value(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
 }
 
 /// Factory: create the right provider from config (without custom URL)
@@ -1528,20 +1601,28 @@ fn create_provider_with_url_and_options(
         // ── Bring Your Own Provider (custom URL) ───────────
         // Format: "custom:https://your-api.com" or "custom:http://localhost:1234"
         name if name.starts_with("custom:") => {
-            let base_url = parse_custom_provider_url(
+            let (base_url, native_from_query) = parse_openai_custom_provider_url(
                 name.strip_prefix("custom:").unwrap_or(""),
                 "Custom provider",
                 "custom:https://your-api.com",
             )?;
+            let native_enabled = options
+                .native_tool_calling
+                .or(native_from_query)
+                .unwrap_or(false);
             // Text-only by default: many self-hosted OpenAI-compatible backends (e.g. llama.cpp
             // GGUF without mmproj) reject multimodal payloads. Use a named provider with vision
             // or `[multimodal].vision_provider` when you need images.
-            Ok(compat(OpenAiCompatibleProvider::new(
+            let mut provider = OpenAiCompatibleProvider::new(
                 "Custom",
                 &base_url,
                 key,
                 AuthStyle::Bearer,
-            )))
+            );
+            if !native_enabled {
+                provider = provider.without_native_tools();
+            }
+            Ok(compat(provider))
         }
 
         // ── Anthropic-compatible custom endpoints ───────────
@@ -2938,6 +3019,39 @@ mod tests {
             !provider.supports_vision(),
             "custom: OpenAI-compatible endpoints default to text-only; multimodal requires mmproj / a vision-capable backend"
         );
+        assert!(
+            !provider.capabilities().native_tool_calling,
+            "custom: endpoints default to prompt-guided tools; many proxies mishandle native tools"
+        );
+    }
+
+    #[test]
+    fn factory_custom_url_native_tools_opt_in_via_runtime_options() {
+        let options = ProviderRuntimeOptions {
+            native_tool_calling: Some(true),
+            ..ProviderRuntimeOptions::default()
+        };
+        let provider = create_provider_with_url_and_options(
+            "custom:https://my-llm.example.com/v1",
+            Some("key"),
+            None,
+            &options,
+        )
+        .expect("custom provider should build");
+        assert!(provider.capabilities().native_tool_calling);
+    }
+
+    #[test]
+    fn factory_custom_url_strips_native_tool_query_and_enables_tools() {
+        let options = ProviderRuntimeOptions::default();
+        let provider = create_provider_with_url_and_options(
+            "custom:https://my-llm.example.com/v1?native_tool_calling=true",
+            Some("key"),
+            None,
+            &options,
+        )
+        .expect("custom provider should build");
+        assert!(provider.capabilities().native_tool_calling);
     }
 
     #[test]

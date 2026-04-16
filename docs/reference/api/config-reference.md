@@ -2,7 +2,7 @@
 
 This is a high-signal reference for common config sections and defaults.
 
-Last verified: **April 15, 2026**.
+Last verified: **April 16, 2026**.
 
 Config path resolution at startup:
 
@@ -25,6 +25,7 @@ Schema export command:
 | `default_provider` | `openrouter` | provider ID or alias |
 | `default_model` | `anthropic/claude-sonnet-4.6` | model routed through selected provider |
 | `default_temperature` | `0.7` | model temperature |
+| `native_tool_calling` | unset | For `default_provider = "custom:https://..."` / `"custom:http://..."` only: when `true`, send native OpenAI `tools` / `tool_choice`. When unset or `false`, use prompt-guided tools (default for custom URLs — many proxies and local servers mishandle native tools). Top-level value wins; if unset, an active `[model_providers.<id>]` profile may supply it (see below). You can also append `?native_tool_calling=true` to the custom URL (values `1`, `true`, `yes`, `on`; case-insensitive) — the query is stripped before calling upstream. |
 
 ## `[observability]`
 
@@ -72,6 +73,21 @@ Operational note for container users:
 
 - If your `config.toml` sets an explicit custom provider like `custom:https://.../v1`, a default `PROVIDER=openrouter` from Docker/container env will no longer replace it.
 - Use `ZEROCLAW_PROVIDER` when you intentionally want runtime env to override a non-default configured provider.
+
+## `[model_providers.<id>]` (named profiles)
+
+Codex-style named profiles under `[model_providers]` can set `base_url`, `api_path`, auth flags, and related fields. When `default_provider` matches a profile id (after env overrides such as `ZEROCLAW_MODEL_PROVIDER` / `MODEL_PROVIDER`), missing top-level fields are merged from that profile — including `api_path` and `native_tool_calling` when the top-level `native_tool_calling` key is unset.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `name` | unset | Provider type hint (`openai`, `openai-codex`, etc.) |
+| `base_url` | unset | OpenAI-compatible base URL merged into runtime when top-level `api_url` is empty |
+| `api_path` | unset | Path suffix merged when top-level `api_path` is unset |
+| `native_tool_calling` | unset | Same semantics as top-level `native_tool_calling`, applied only when the top-level key is unset |
+| `wire_api` | unset | Protocol variant (`responses`, `chat_completions`, …) |
+| `requires_openai_auth` | `false` | Load OpenAI auth when no `api_key` in config |
+
+Other profile keys (`azure_openai_*`, etc.) match `src/config/schema.rs` — see `zeroclaw config schema` for the full struct.
 
 ## `[agent]`
 
@@ -756,6 +772,7 @@ Notes:
 - Telegram-only interruption behavior is controlled with `channels_config.telegram.interrupt_on_new_message` (default `false`).
   When enabled, a newer message from the same sender in the same chat cancels the in-flight request and preserves interrupted user context.
 - While `zeroclaw channel start` is running, updates to `default_provider`, `default_model`, `default_temperature`, `api_key`, `api_url`, and `reliability.*` are hot-applied from `config.toml` on the next inbound message.
+- Provider runtime wiring such as `api_path` and `native_tool_calling` is fixed when the channel process starts; restart after changing those keys.
 
 ### `[channels_config.telegram]`
 
