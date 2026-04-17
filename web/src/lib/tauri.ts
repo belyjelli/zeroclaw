@@ -1,4 +1,4 @@
-// Tauri detection utilities for ZeroClaw Desktop.
+// Tauri detection utilities for Goctopus Desktop.
 
 declare global {
   interface Window {

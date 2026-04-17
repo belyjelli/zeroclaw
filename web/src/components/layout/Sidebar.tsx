@@ -125,7 +125,7 @@ export default function Sidebar() {
           <div className="absolute -inset-1.5 rounded-xl" style={{ background: 'linear-gradient(135deg, rgba(var(--pc-accent-rgb), 0.15), rgba(var(--pc-accent-rgb), 0.05))' }} />
           <img
             src={`${staticAssetBase}/zeroclaw-trans.png`}
-            alt="ZeroClaw"
+            alt="Goctopus"
             className="relative h-9 w-9 rounded-xl object-cover"
             onError={(e) => {
               const img = e.currentTarget;
@@ -134,7 +134,7 @@ export default function Sidebar() {
           />
         </div>
         <span className="text-sm font-semibold tracking-wide" style={{ color: 'var(--pc-text-primary)' }}>
-          ZeroClaw
+          Goctopus
         </span>
       </div>
 
@@ -187,7 +187,7 @@ export default function Sidebar() {
             </nav>
 
             <div className="px-5 py-4 border-t text-[10px] uppercase tracking-wider shrink-0" style={{ borderColor: 'var(--pc-border)', color: 'var(--pc-text-faint)' }}>
-              ZeroClaw Runtime
+              Goctopus Runtime
             </div>
           </div>
 

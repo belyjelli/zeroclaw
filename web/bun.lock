@@ -3,7 +3,7 @@
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "zeroclaw-web",
+      "name": "goctopus-web",
       "dependencies": {
         "@iarna/toml": "^2.2.5",
         "lucide-react": "^0.468.0",

@@ -91,7 +91,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       .catch(() => {
         if (import.meta.env.DEV || import.meta.hot) {
           console.info(
-            "[ZeroClaw web] Gateway /health unreachable. If you expected a real gateway, set VITE_WEB_DEV_MOCK=0 in web/.env.development and use a Vite proxy or open the dashboard from the gateway.",
+            "[Goctopus web] Gateway /health unreachable. If you expected a real gateway, set VITE_WEB_DEV_MOCK=0 in web/.env.development and use a Vite proxy or open the dashboard from the gateway.",
           );
         }
         // Vite dev without a gateway: /health is often HTML or 404; do not block the UI on pairing.

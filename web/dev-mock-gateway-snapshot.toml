@@ -1,4 +1,4 @@
-# ZeroClaw — full configuration reference (`Config` in `src/config/schema.rs`)
+# Goctopus — full configuration reference (`Config` in `src/config/schema.rs`)
 #
 # Copy to ~/.zeroclaw/config.toml (e.g. Raspberry Pi production). deploy-rpi.sh can do this.
 # API keys: prefer ~/.zeroclaw/.env (e.g. ANTHROPIC_API_KEY) or provider-specific env vars.
