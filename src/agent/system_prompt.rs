@@ -500,6 +500,15 @@ fn render_static_body(ctx: &PromptAssemblyContext<'_>) -> Result<String> {
          - When unsure whether a tool call succeeded, ask the user rather than guessing.\n\n",
     );
 
+    if ctx.tools.iter().any(|(name, _)| *name == "file_read") {
+        prompt.push_str(
+            "## Workspace file reads (freshness)\n\n\
+             Workspace files can change on disk between turns (editors, sync, git, Docker bind mounts). \
+             When the user asks to read, show, open, print, or display a workspace file, **call `file_read` for that path on this turn**. \
+             Do not treat earlier `file_read` output or chat history as the authoritative current file contents after the user may have edited the file.\n\n",
+        );
+    }
+
     if !ctx.tools.is_empty() {
         prompt.push_str("## Tools\n\n");
         if ctx.compact_context {

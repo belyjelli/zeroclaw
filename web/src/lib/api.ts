@@ -11,7 +11,7 @@ import type {
   HealthSnapshot,
 } from '../types/api';
 import { clearToken, getToken, setToken } from './auth';
-import { apiOrigin, basePath } from './basePath';
+import { apiOrigin, gatewayPublicPrefix } from './basePath';
 import { runtimeFetch } from './runtimeFetch';
 
 // ---------------------------------------------------------------------------
@@ -44,7 +44,7 @@ export async function apiFetch<T = unknown>(
     headers.set('Content-Type', 'application/json');
   }
 
-  const response = await runtimeFetch(`${apiOrigin}${basePath}${path}`, { ...options, headers });
+  const response = await runtimeFetch(`${apiOrigin}${gatewayPublicPrefix}${path}`, { ...options, headers });
 
   if (response.status === 401) {
     clearToken();
@@ -80,7 +80,7 @@ function unwrapField<T>(value: T | Record<string, T>, key: string): T {
 // ---------------------------------------------------------------------------
 
 export async function pair(code: string): Promise<{ token: string }> {
-  const response = await runtimeFetch(`${basePath}/pair`, {
+  const response = await runtimeFetch(`${apiOrigin}${gatewayPublicPrefix}/pair`, {
     method: 'POST',
     headers: { 'X-Pairing-Code': code },
   });
@@ -96,7 +96,7 @@ export async function pair(code: string): Promise<{ token: string }> {
 }
 
 export async function getAdminPairCode(): Promise<{ pairing_code: string | null; pairing_required: boolean }> {
-  const response = await runtimeFetch('/admin/paircode');
+  const response = await runtimeFetch(`${apiOrigin}${gatewayPublicPrefix}/admin/paircode`);
   if (!response.ok) {
     throw new Error(`Failed to fetch pairing code (${response.status})`);
   }
@@ -108,7 +108,7 @@ export async function getAdminPairCode(): Promise<{ pairing_code: string | null;
 // ---------------------------------------------------------------------------
 
 export async function getPublicHealth(): Promise<{ require_pairing: boolean; paired: boolean }> {
-  const response = await runtimeFetch(`${basePath}/health`);
+  const response = await runtimeFetch(`${apiOrigin}${gatewayPublicPrefix}/health`);
   if (!response.ok) {
     throw new Error(`Health check failed (${response.status})`);
   }

@@ -1,11 +1,11 @@
 import { generateUUID } from "./uuid";
-import { basePath } from "./basePath";
+import { staticAssetBase } from "./basePath";
 import { getWebDevMockSection, isWebDevMockActive } from "./devMockConfig";
 import gatewayConfigSnapshot from "../../dev-mock-gateway-snapshot.toml?raw";
 
-/** Strip SPA `basePath` so mock routes match gateway-style paths (`/health`, `/api/...`). */
+/** Strip static-asset mount (`/_app`) so mock routes match gateway-style paths (`/health`, `/api/...`). */
 function logicalPathname(pathname: string): string {
-  const p = basePath.replace(/\/+$/, "");
+  const p = staticAssetBase.replace(/\/+$/, "");
   if (!p) return pathname;
   if (pathname === p || pathname === `${p}/`) return "/";
   if (pathname.startsWith(`${p}/`)) return pathname.slice(p.length) || "/";
@@ -72,6 +72,11 @@ function mockStatus() {
     paired: true,
     channels: {},
     health,
+    webui: {
+      source: "embedded" as const,
+      external_path: null,
+      path_prefix_rewrite: false,
+    },
   };
 }
 

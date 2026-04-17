@@ -1054,7 +1054,13 @@ async fn main() -> Result<()> {
 
         Commands::Gateway { gateway_command } => {
             match gateway_command {
-                Some(zeroclaw::GatewayCommands::Restart { port, host }) => {
+                Some(zeroclaw::GatewayCommands::Restart {
+                    port,
+                    host,
+                    webui_external_path,
+                }) => {
+                    let mut config = config;
+                    apply_webui_cli_override(&mut config, webui_external_path);
                     let (port, host) = resolve_gateway_addr(&config, port, host);
                     let addr = format!("{host}:{port}");
                     info!("🔄 Restarting ZeroClaw Gateway on {addr}");
@@ -1134,7 +1140,13 @@ async fn main() -> Result<()> {
                     }
                     Ok(())
                 }
-                Some(zeroclaw::GatewayCommands::Start { port, host }) => {
+                Some(zeroclaw::GatewayCommands::Start {
+                    port,
+                    host,
+                    webui_external_path,
+                }) => {
+                    let mut config = config;
+                    apply_webui_cli_override(&mut config, webui_external_path);
                     let (port, host) = resolve_gateway_addr(&config, port, host);
                     log_gateway_start(&host, port);
                     Box::pin(gateway::run_gateway(&host, port, config)).await
@@ -1892,6 +1904,16 @@ fn write_shell_completion<W: Write>(shell: CompletionShell, writer: &mut W) -> R
 }
 
 // ─── Gateway helper functions ───────────────────────────────────────────────
+
+/// CLI `--webui-external-path` overrides `[webui].external_path` for this gateway process.
+fn apply_webui_cli_override(config: &mut Config, path: Option<String>) {
+    if let Some(s) = path {
+        let t = s.trim();
+        if !t.is_empty() {
+            config.webui.external_path = t.to_string();
+        }
+    }
+}
 
 /// Resolve gateway host and port from CLI args or config.
 fn resolve_gateway_addr(config: &Config, port: Option<u16>, host: Option<String>) -> (u16, String) {

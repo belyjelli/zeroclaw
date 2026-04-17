@@ -439,6 +439,26 @@ impl Agent {
         );
     }
 
+    /// Skip response-cache lookup when the user is explicitly asking to (re)read workspace files.
+    fn bypass_response_cache_for_workspace_read_intent(user_message: &str) -> bool {
+        let lower = user_message.trim().to_ascii_lowercase();
+        if lower.starts_with("/read") || lower.starts_with("/refresh") {
+            return true;
+        }
+        if lower.starts_with("read ")
+            || lower.starts_with("re-read ")
+            || lower.starts_with("reread ")
+        {
+            return true;
+        }
+        if lower.contains("refresh ")
+            && (lower.contains("workspace") || lower.contains("file"))
+        {
+            return true;
+        }
+        false
+    }
+
     /// Hydrate the agent with prior chat messages (e.g. from a session backend).
     ///
     /// Ensures a system prompt is prepended if history is empty, then appends all
@@ -931,8 +951,20 @@ impl Agent {
                 .push(ConversationMessage::Chat(ChatMessage::system(
                     system_prompt,
                 )));
-        } else if self.memory_cfg.layered.enabled {
+        } else if self.memory_cfg.layered.enabled
+            || self.config.refresh_system_prompt_from_disk_each_turn
+        {
+            let prev = match self.history.first() {
+                Some(ConversationMessage::Chat(c)) if c.role == "system" => Some(c.content.as_str()),
+                _ => None,
+            };
             let new_sys = self.build_system_prompt(layered_ref)?;
+            if prev.map(|p| p != new_sys.as_str()).unwrap_or(true) {
+                tracing::info!(
+                    workspace = %self.workspace_dir.display(),
+                    "Detected change in workspace-driven system prompt — reloading from disk"
+                );
+            }
             if let Some(ConversationMessage::Chat(cm)) = self.history.first_mut() {
                 if cm.role == "system" {
                     cm.content = new_sys;
@@ -999,7 +1031,9 @@ impl Agent {
             let messages = self.tool_dispatcher.to_provider_messages(&self.history);
 
             // Response cache: check before LLM call (only for deterministic, text-only prompts)
-            let cache_key = if self.temperature == 0.0 {
+            let cache_key = if self.temperature == 0.0
+                && !Self::bypass_response_cache_for_workspace_read_intent(user_message)
+            {
                 self.response_cache.as_ref().map(|_| {
                     let last_user = messages
                         .iter()
@@ -1229,8 +1263,20 @@ impl Agent {
                 .push(ConversationMessage::Chat(ChatMessage::system(
                     system_prompt,
                 )));
-        } else if self.memory_cfg.layered.enabled {
+        } else if self.memory_cfg.layered.enabled
+            || self.config.refresh_system_prompt_from_disk_each_turn
+        {
+            let prev = match self.history.first() {
+                Some(ConversationMessage::Chat(c)) if c.role == "system" => Some(c.content.as_str()),
+                _ => None,
+            };
             let new_sys = self.build_system_prompt(layered_ref)?;
+            if prev.map(|p| p != new_sys.as_str()).unwrap_or(true) {
+                tracing::info!(
+                    workspace = %self.workspace_dir.display(),
+                    "Detected change in workspace-driven system prompt — reloading from disk"
+                );
+            }
             if let Some(ConversationMessage::Chat(cm)) = self.history.first_mut() {
                 if cm.role == "system" {
                     cm.content = new_sys;
@@ -1292,7 +1338,9 @@ impl Agent {
             let messages = self.tool_dispatcher.to_provider_messages(&self.history);
 
             // Response cache check (same as turn)
-            let cache_key = if self.temperature == 0.0 {
+            let cache_key = if self.temperature == 0.0
+                && !Self::bypass_response_cache_for_workspace_read_intent(user_message)
+            {
                 self.response_cache.as_ref().map(|_| {
                     let last_user = messages
                         .iter()
@@ -2012,5 +2060,16 @@ mod tests {
             matches!(&history[2], ConversationMessage::Chat(m) if m.role == "assistant" && m.content == "hi there")
         );
         assert_eq!(history.len(), 3);
+    }
+
+    #[test]
+    fn bypass_response_cache_for_read_like_prompts() {
+        assert!(Agent::bypass_response_cache_for_workspace_read_intent("read ok.md"));
+        assert!(Agent::bypass_response_cache_for_workspace_read_intent("/read x"));
+        assert!(Agent::bypass_response_cache_for_workspace_read_intent("/refresh"));
+        assert!(Agent::bypass_response_cache_for_workspace_read_intent(
+            "refresh workspace files"
+        ));
+        assert!(!Agent::bypass_response_cache_for_workspace_read_intent("hello world"));
     }
 }

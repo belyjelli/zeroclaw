@@ -11,38 +11,52 @@ declare global {
   }
 }
 
-function spaPathPrefixNonTauri(): string {
+/** Reverse-proxy mount only (e.g. "/zc"). Never "/_app" — that is only for static assets. */
+function gatewayInjectedPrefix(): string {
   const injected = window.__ZEROCLAW_BASE__;
-  const trimmed =
-    typeof injected === 'string' && injected.trim().length > 0
-      ? injected.trim().replace(/\/+$/, '')
-      : '';
+  if (typeof injected !== 'string' || !injected.trim()) return '';
+  return injected.trim().replace(/\/+$/, '');
+}
 
-  // `??` skips `""` from the gateway; empty string must not hide `import.meta.env.BASE_URL`.
+/** Vite `base` (dev + built asset URLs under the gateway). */
+function viteAppAssetDir(): string {
   const fromVite = String(import.meta.env.BASE_URL ?? '/')
     .replace(/\/+$/, '')
     .replace(/^\/+$/, '');
+  return fromVite || '/_app';
+}
 
-  let p = trimmed || fromVite || '';
+function joinUrlPath(prefix: string, path: string): string {
+  const p = prefix.replace(/\/+$/, '');
+  const suffix = path.startsWith('/') ? path : `/${path}`;
+  if (!p) return suffix;
+  return `${p}${suffix}`;
+}
 
-  // Last resort: URL is our SPA path but prefix was lost (e.g. `__ZEROCLAW_BASE__=""`).
-  // Use `/_app` or `/_app/...` only — not `/_application` etc.
-  if (!p && typeof window !== 'undefined') {
-    const path = window.location.pathname;
-    if (path === '/_app' || path.startsWith('/_app/')) {
-      p = '/_app';
-    }
-  }
-
-  return p.replace(/\/+$/, '').replace(/^\/+$/, '');
+function isViteUiDev(): boolean {
+  return import.meta.env.DEV || Boolean(import.meta.hot);
 }
 
 /**
- * SPA path prefix (e.g. "/_app" under the Rust gateway, or Vite `base` during `bun run dev`).
- * Gateway may set `window.__ZEROCLAW_BASE__`; otherwise use Vite's `BASE_URL` so `/health`
- * and `/api/...` resolve under the same prefix as the UI.
+ * Prefix for gateway HTTP/WebSocket APIs (`/health`, `/pair`, `/api`, `/ws`, `/admin`).
+ * Same-origin dashboard: empty. Behind a path-mounted gateway: `window.__ZEROCLAW_BASE__`.
  */
-export const basePath: string = isTauri() ? '' : spaPathPrefixNonTauri();
+export const gatewayPublicPrefix: string = isTauri() ? '' : gatewayInjectedPrefix();
+
+/**
+ * Where built static files are mounted (`/_app` or `{prefix}/_app` after gateway HTML rewrite).
+ */
+export const staticAssetBase: string = isTauri()
+  ? ''
+  : joinUrlPath(gatewayPublicPrefix, viteAppAssetDir());
+
+/**
+ * React Router basename.
+ * - Vite dev: `/_app` (matches `base: '/_app/'`).
+ * - Production (gateway): SPA routes live at `/`, `/agent`, … — not under `/_app` (only assets are).
+ * - Path-mounted gateway: `/zc` so routes are `/zc`, `/zc/agent`, …
+ */
+export const basePath: string = isTauri() ? '' : isViteUiDev() ? viteAppAssetDir() : gatewayPublicPrefix;
 
 /** Full origin for API requests. Empty when served by the gateway (same-origin). */
 export const apiOrigin: string = isTauri() ? tauriGatewayUrl() : '';

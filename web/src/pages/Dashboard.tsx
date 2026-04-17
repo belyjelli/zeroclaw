@@ -157,6 +157,18 @@ export default function Dashboard() {
         ))}
       </div>
 
+      {status.webui && (
+        <p
+          className="text-xs font-mono px-1"
+          style={{ color: "var(--pc-text-faint)" }}
+          title="Gateway static dashboard source"
+        >
+          Web UI: {status.webui.source}
+          {status.webui.external_path ? ` — ${status.webui.external_path}` : ""}
+          {status.webui.path_prefix_rewrite ? " · path-prefix rewrite on" : ""}
+        </p>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 stagger-children">
         {/* Cost Widget */}
         <div className="card p-5 animate-slide-in-up">

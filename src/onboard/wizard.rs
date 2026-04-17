@@ -8,7 +8,8 @@ use crate::config::schema::{
 use crate::config::{
     AutonomyConfig, BrowserConfig, ChannelsConfig, ComposioConfig, Config, DiscordConfig,
     HeartbeatConfig, IMessageConfig, LarkConfig, MatrixConfig, MemoryConfig, ObservabilityConfig,
-    RuntimeConfig, SecretsConfig, SlackConfig, StorageConfig, TelegramConfig, WebhookConfig,
+    RuntimeConfig, SecretsConfig, SlackConfig, StorageConfig, TelegramConfig, WebUiConfig,
+    WebhookConfig,
 };
 use crate::hardware::{self, HardwareConfig};
 use crate::memory::{
@@ -166,6 +167,7 @@ pub async fn run_wizard(force: bool) -> Result<Config> {
         storage: StorageConfig::default(),
         tunnel: tunnel_config,
         gateway: crate::config::GatewayConfig::default(),
+        webui: WebUiConfig::default(),
         composio: composio_config,
         microsoft365: crate::config::Microsoft365Config::default(),
         secrets: secrets_config,
@@ -609,6 +611,7 @@ async fn run_quick_setup_with_home(
         storage: StorageConfig::default(),
         tunnel: crate::config::TunnelConfig::default(),
         gateway: crate::config::GatewayConfig::default(),
+        webui: WebUiConfig::default(),
         composio: ComposioConfig::default(),
         microsoft365: crate::config::Microsoft365Config::default(),
         secrets: SecretsConfig::default(),

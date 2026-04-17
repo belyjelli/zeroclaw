@@ -6,6 +6,7 @@ use std::time::SystemTime;
 fn main() {
     let dist_dir = Path::new("web/dist");
     let web_dir = Path::new("web");
+    let embed_web_ui = std::env::var_os("CARGO_FEATURE_EMBEDDED_WEB_UI").is_some();
 
     // Tell Cargo to re-run this script when web sources or bundled assets change.
     println!("cargo:rerun-if-changed=web/src");
@@ -20,70 +21,77 @@ fn main() {
     println!("cargo:rerun-if-changed=web/vite.config.ts");
     println!("cargo:rerun-if-changed=web/dist");
 
-    // Attempt to build the web frontend if Bun is available and web/dist is
-    // missing or stale. The build is best-effort: when Bun is not installed
-    // (e.g. CI containers, cross-compilation, minimal dev setups) we fall
-    // back to the existing stub/empty dist directory so the Rust build still
-    // succeeds.
-    let needs_build = web_build_required(web_dir, dist_dir);
+    if embed_web_ui {
+        // Attempt to build the web frontend if Bun is available and web/dist is
+        // missing or stale. The build is best-effort: when Bun is not installed
+        // (e.g. CI containers, cross-compilation, minimal dev setups) we fall
+        // back to the existing stub/empty dist directory so the Rust build still
+        // succeeds.
+        let needs_build = web_build_required(web_dir, dist_dir);
 
-    if needs_build && web_dir.join("package.json").exists() {
-        if let Ok(bun) = which_bun() {
-            eprintln!("cargo:warning=Building web frontend (web/dist is missing or stale)...");
+        if needs_build && web_dir.join("package.json").exists() {
+            if let Ok(bun) = which_bun() {
+                eprintln!("cargo:warning=Building web frontend (web/dist is missing or stale)...");
 
-            let install_status = Command::new(&bun)
-                .args(["install", "--frozen-lockfile"])
-                .current_dir(web_dir)
-                .status();
+                let install_status = Command::new(&bun)
+                    .args(["install", "--frozen-lockfile"])
+                    .current_dir(web_dir)
+                    .status();
 
-            match install_status {
-                Ok(s) if s.success() => {}
-                Ok(s) => {
-                    eprintln!(
-                        "cargo:warning=bun install --frozen-lockfile exited with {s}, trying bun install..."
-                    );
-                    let fallback = Command::new(&bun)
-                        .args(["install"])
-                        .current_dir(web_dir)
-                        .status();
-                    if !matches!(fallback, Ok(s) if s.success()) {
-                        eprintln!("cargo:warning=bun install failed — skipping web build");
+                match install_status {
+                    Ok(s) if s.success() => {}
+                    Ok(s) => {
+                        eprintln!(
+                            "cargo:warning=bun install --frozen-lockfile exited with {s}, trying bun install..."
+                        );
+                        let fallback = Command::new(&bun)
+                            .args(["install"])
+                            .current_dir(web_dir)
+                            .status();
+                        if !matches!(fallback, Ok(s) if s.success()) {
+                            eprintln!("cargo:warning=bun install failed — skipping web build");
+                            ensure_dist_dir(dist_dir);
+                            return;
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("cargo:warning=Could not run bun: {e} — skipping web build");
                         ensure_dist_dir(dist_dir);
                         return;
                     }
                 }
-                Err(e) => {
-                    eprintln!("cargo:warning=Could not run bun: {e} — skipping web build");
-                    ensure_dist_dir(dist_dir);
-                    return;
-                }
-            }
 
-            let build_status = Command::new(&bun)
-                .args(["run", "build"])
-                .current_dir(web_dir)
-                .status();
+                let build_status = Command::new(&bun)
+                    .args(["run", "build"])
+                    .current_dir(web_dir)
+                    .status();
 
-            match build_status {
-                Ok(s) if s.success() => {
-                    eprintln!("cargo:warning=Web frontend built successfully.");
-                }
-                Ok(s) => {
-                    eprintln!(
-                        "cargo:warning=bun run build exited with {s} — web dashboard may be unavailable"
-                    );
-                }
-                Err(e) => {
-                    eprintln!(
-                        "cargo:warning=Could not run bun build: {e} — web dashboard may be unavailable"
-                    );
+                match build_status {
+                    Ok(s) if s.success() => {
+                        eprintln!("cargo:warning=Web frontend built successfully.");
+                    }
+                    Ok(s) => {
+                        eprintln!(
+                            "cargo:warning=bun run build exited with {s} — web dashboard may be unavailable"
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "cargo:warning=Could not run bun build: {e} — web dashboard may be unavailable"
+                        );
+                    }
                 }
             }
         }
-    }
 
-    ensure_dist_dir(dist_dir);
-    ensure_dashboard_assets(dist_dir);
+        ensure_dist_dir(dist_dir);
+        ensure_dashboard_assets(dist_dir);
+    } else {
+        eprintln!(
+            "cargo:warning=Feature `embedded-web-ui` is disabled — skipping optional web/dist build (bun)"
+        );
+        ensure_dist_dir(dist_dir);
+    }
 }
 
 fn web_build_required(web_dir: &Path, dist_dir: &Path) -> bool {

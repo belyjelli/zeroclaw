@@ -121,6 +121,15 @@ pub fn format_dynamic_context_block(
     Ok(block)
 }
 
+/// Drop memoized dynamic-context block for `workspace` so the next prompt assembly recomputes from disk.
+pub fn clear_dynamic_context_block_cache_for_workspace(workspace: &Path) {
+    let ws = workspace
+        .canonicalize()
+        .unwrap_or_else(|_| workspace.to_path_buf());
+    let mut guard = dynamic_context_block_cache().lock();
+    guard.remove(&ws);
+}
+
 #[cfg(test)]
 mod cache_tests {
     use super::*;

@@ -110,6 +110,11 @@ Examples:
         /// Note: Binding to 0.0.0.0 requires `gateway.allow_public_bind = true` in config
         #[arg(long)]
         host: Option<String>,
+
+        /// Serve the web dashboard from this directory (built `web/dist`, must contain `index.html`).
+        /// Overrides `[webui].external_path` in config for this process.
+        #[arg(long)]
+        webui_external_path: Option<String>,
     },
     /// Restart the gateway server
     #[command(long_about = "\
@@ -130,6 +135,11 @@ Examples:
         /// Note: Binding to 0.0.0.0 requires `gateway.allow_public_bind = true` in config
         #[arg(long)]
         host: Option<String>,
+
+        /// Serve the web dashboard from this directory (built `web/dist`, must contain `index.html`).
+        /// Overrides `[webui].external_path` in config for this process.
+        #[arg(long)]
+        webui_external_path: Option<String>,
     },
     /// Show or generate the pairing code without restarting
     #[command(long_about = "\

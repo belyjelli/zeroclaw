@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { basePath } from '../../lib/basePath';
+import { staticAssetBase } from '../../lib/basePath';
 import {
   LayoutDashboard,
   MessageSquare,
@@ -124,7 +124,7 @@ export default function Sidebar() {
         <div className="relative shrink-0">
           <div className="absolute -inset-1.5 rounded-xl" style={{ background: 'linear-gradient(135deg, rgba(var(--pc-accent-rgb), 0.15), rgba(var(--pc-accent-rgb), 0.05))' }} />
           <img
-            src={`${basePath}/zeroclaw-trans.png`}
+            src={`${staticAssetBase}/zeroclaw-trans.png`}
             alt="ZeroClaw"
             className="relative h-9 w-9 rounded-xl object-cover"
             onError={(e) => {

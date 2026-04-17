@@ -1,3 +1,10 @@
+/** Active web dashboard source (embedded `web/dist/` vs `[webui].external_path`). */
+export interface WebUiStatusSnapshot {
+  source: 'embedded' | 'external';
+  external_path: string | null;
+  path_prefix_rewrite: boolean;
+}
+
 export interface StatusResponse {
   provider: string | null;
   model: string;
@@ -9,6 +16,7 @@ export interface StatusResponse {
   paired: boolean;
   channels: Record<string, boolean>;
   health: HealthSnapshot;
+  webui?: WebUiStatusSnapshot;
 }
 
 export interface HealthSnapshot {

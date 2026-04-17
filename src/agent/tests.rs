@@ -1340,3 +1340,52 @@ async fn run_single_delegates_to_turn() {
         "Expected non-empty response from run_single"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 26. System prompt refresh from disk (gateway-style long sessions)
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn system_prompt_refreshes_agents_md_on_each_turn_when_enabled() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = tmp.path();
+    std::fs::write(ws.join("AGENTS.md"), "MARKER_V1_UNIQUE").unwrap();
+
+    let mut agent_cfg = AgentConfig::default();
+    agent_cfg.refresh_system_prompt_from_disk_each_turn = true;
+
+    let provider = Box::new(ScriptedProvider::new(vec![
+        text_response("r1"),
+        text_response("r2"),
+    ]));
+    let mut agent = Agent::builder()
+        .provider(provider)
+        .tools(vec![Box::new(EchoTool)])
+        .memory(make_memory())
+        .observer(make_observer())
+        .tool_dispatcher(Box::new(NativeToolDispatcher))
+        .workspace_dir(ws.to_path_buf())
+        .memory_cfg(MemoryConfig::default())
+        .config(agent_cfg)
+        .build()
+        .unwrap();
+
+    let _ = agent.turn("hello").await.unwrap();
+    let sys1 = match &agent.history()[0] {
+        ConversationMessage::Chat(c) if c.role == "system" => c.content.as_str(),
+        other => panic!("expected system first, got {other:?}"),
+    };
+    assert!(sys1.contains("MARKER_V1_UNIQUE"));
+
+    std::fs::write(ws.join("AGENTS.md"), "MARKER_V2_UNIQUE").unwrap();
+    let _ = agent.turn("again").await.unwrap();
+    let sys2 = match &agent.history()[0] {
+        ConversationMessage::Chat(c) if c.role == "system" => c.content.as_str(),
+        other => panic!("expected system first, got {other:?}"),
+    };
+    assert!(
+        sys2.contains("MARKER_V2_UNIQUE"),
+        "system prompt should reflect AGENTS.md change on disk"
+    );
+    assert!(!sys2.contains("MARKER_V1_UNIQUE"));
+}

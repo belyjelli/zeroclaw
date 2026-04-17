@@ -110,6 +110,7 @@ pub async fn handle_api_status(
         channels.insert(channel.name().to_string(), serde_json::Value::Bool(present));
     }
 
+    let webui = state.web_ui.status_json(state.path_prefix.as_str());
     let body = serde_json::json!({
         "provider": config.default_provider,
         "model": state.model,
@@ -121,6 +122,7 @@ pub async fn handle_api_status(
         "paired": state.pairing.is_paired(),
         "channels": channels,
         "health": health,
+        "webui": webui,
     });
 
     Json(body).into_response()
@@ -200,9 +202,27 @@ pub async fn handle_api_config_put(
     }
 
     // Update in-memory config
-    *state.config.lock() = new_config;
+    *state.config.lock() = new_config.clone();
+    state.web_ui.reload_from_config(&new_config);
 
     Json(serde_json::json!({"status": "ok"})).into_response()
+}
+
+/// POST /api/webui/reload — re-resolve `[webui].external_path` from the current in-memory config.
+pub async fn handle_api_webui_reload(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(e) = require_auth(&state, &headers) {
+        return e.into_response();
+    }
+    let cfg = state.config.lock().clone();
+    state.web_ui.reload_from_config(&cfg);
+    Json(serde_json::json!({
+        "status": "ok",
+        "webui": state.web_ui.status_json(state.path_prefix.as_str()),
+    }))
+    .into_response()
 }
 
 /// GET /api/tools — list registered tool specs
@@ -1520,6 +1540,7 @@ mod tests {
     }
 
     fn test_state(config: crate::config::Config) -> AppState {
+        let web_ui = crate::gateway::web_ui::WebUiServeState::for_tests(&config);
         AppState {
             config: Arc::new(Mutex::new(config)),
             provider: Arc::new(MockProvider),
@@ -1553,6 +1574,7 @@ mod tests {
             hooks: None,
             canvas_store: crate::tools::canvas::CanvasStore::new(),
             gateway_chat_routes: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
+            web_ui,
         }
     }
 

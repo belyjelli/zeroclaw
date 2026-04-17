@@ -77,6 +77,15 @@ pub async fn handle_gateway_ws_slash(
     session_key: &str,
     content: &str,
 ) -> Option<GatewaySlashResult> {
+    if let Some(kind) = super::workspace_slash::parse_gateway_workspace_slash(content) {
+        let reply = super::workspace_slash::handle_gateway_workspace_slash(state, kind).await;
+        return Some(GatewaySlashResult {
+            reply,
+            clear_chat_session: false,
+            rebind: None,
+        });
+    }
+
     let parsed = runtime_slash::parse_gateway_ws_slash(content)?;
     let config = state.config.lock().clone();
     let defaults = default_gateway_route(&config);
@@ -204,6 +213,9 @@ pub fn slash_command_catalog() -> serde_json::Value {
             { "name": "/models", "description": "List providers or /models <provider> to switch" },
             { "name": "/model", "description": "Show models or /model <id> to switch" },
             { "name": "/config", "description": "Show current provider, model, and routes" },
+            { "name": "/read", "description": "Read a workspace file from disk now (e.g. /read ok.md)" },
+            { "name": "/refresh", "description": "Clear dynamic-context memo; optional path re-reads one file" },
+            { "name": "/webui", "description": "Show dashboard source (/webui status) or reload from config (/webui reload)" },
         ]
     })
 }

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Monitor, Trash2, History, RefreshCw } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
-import { basePath } from '@/lib/basePath';
+import { gatewayPublicPrefix } from '@/lib/basePath';
 import { getToken } from '@/lib/auth';
 import { isWebDevMockActive } from '@/lib/devMockConfig';
 
@@ -32,8 +32,8 @@ export default function Canvas() {
   // Build WebSocket URL for canvas
   const getWsUrl = useCallback((id: string) => {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const base = basePath || '';
-    return `${proto}//${location.host}${base}/ws/canvas/${encodeURIComponent(id)}`;
+    const pfx = gatewayPublicPrefix;
+    return `${proto}//${location.host}${pfx}/ws/canvas/${encodeURIComponent(id)}`;
   }, []);
 
   // Connect to canvas WebSocket

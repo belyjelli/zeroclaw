@@ -13,7 +13,7 @@ if (!rootEl) {
 ReactDOM.createRoot(rootEl).render(
   <React.StrictMode>
     <ErrorBoundary>
-      {/* basePath is injected by the Rust gateway at serve time for reverse-proxy prefix support. */}
+      {/* basename is empty in production (SPA at `/`); Vite dev uses `/_app`. Gateway may inject `__ZEROCLAW_BASE__` for path-mounted installs. */}
       <BrowserRouter basename={basePath || undefined}>
         <App />
       </BrowserRouter>

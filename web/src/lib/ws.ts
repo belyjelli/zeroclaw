@@ -1,6 +1,6 @@
 import type { WsMessage } from '../types/api';
 import { getToken } from './auth';
-import { apiOrigin, basePath } from './basePath';
+import { apiOrigin, gatewayPublicPrefix } from './basePath';
 import { isWebDevMockActive, getWebDevMockSection } from './devMockConfig';
 import { isTauri } from './tauri';
 import { generateUUID } from './uuid';
@@ -90,7 +90,7 @@ export class WebSocketClient {
     const params = new URLSearchParams();
     if (token) params.set('token', token);
     params.set('session_id', sessionId);
-    const url = `${this.baseUrl}${basePath}/ws/chat?${params.toString()}`;
+    const url = `${this.baseUrl}${gatewayPublicPrefix}/ws/chat?${params.toString()}`;
 
     const protocols: string[] = ['zeroclaw.v1'];
     if (token) protocols.push(`bearer.${token}`);

@@ -220,6 +220,8 @@ tool_dispatcher = "auto"
 tool_call_dedup_exempt = []
 tool_filter_groups = []
 max_system_prompt_chars = 0
+# Rebuild the system prompt from workspace files every turn (default true).
+# refresh_system_prompt_from_disk_each_turn = true
 session_archive_retention_days = 0
 
 [agent.thinking]
@@ -418,6 +420,11 @@ code_ttl_secs = 3600
 max_pending_codes = 3
 max_failed_attempts = 5
 lockout_secs = 300
+
+# Optional: serve the React dashboard from a directory on disk (Vite `web/dist`) instead of
+# embedded assets. Empty = use the built-in bundle. See README (Web dashboard).
+[webui]
+external_path = ""
 
 # ── Integrations ────────────────────────────────────────────────
 [composio]

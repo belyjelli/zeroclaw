@@ -218,6 +218,10 @@ pub struct Config {
     #[serde(default)]
     pub gateway: GatewayConfig,
 
+    /// Web dashboard: optional on-disk `web/dist/` override (`[webui]`).
+    #[serde(default)]
+    pub webui: WebUiConfig,
+
     /// Composio managed OAuth tools integration (`[composio]`).
     #[serde(default)]
     pub composio: ComposioConfig,
@@ -1512,6 +1516,11 @@ pub struct AgentConfig {
     /// Useful for small-context models (e.g. glm-4.5-air ~8K tokens → set to 8000).
     #[serde(default = "default_max_system_prompt_chars")]
     pub max_system_prompt_chars: usize,
+    /// When true (default), rebuild the first system message from workspace files on
+    /// every turn so injected bootstrap/dynamic context stays current without layered memory.
+    /// Set to `false` to keep the legacy behavior (snapshot system prompt only on the first turn).
+    #[serde(default = "default_refresh_system_prompt_from_disk_each_turn")]
+    pub refresh_system_prompt_from_disk_each_turn: bool,
     /// Thinking/reasoning level control. Configures how deeply the model reasons
     /// per message. Users can override per-message with `/think:<level>` directives.
     #[serde(default)]
@@ -1571,6 +1580,10 @@ fn default_max_system_prompt_chars() -> usize {
     0
 }
 
+fn default_refresh_system_prompt_from_disk_each_turn() -> bool {
+    true
+}
+
 fn default_session_archive_retention_days() -> u32 {
     0
 }
@@ -1587,6 +1600,8 @@ impl Default for AgentConfig {
             tool_call_dedup_exempt: Vec::new(),
             tool_filter_groups: Vec::new(),
             max_system_prompt_chars: default_max_system_prompt_chars(),
+            refresh_system_prompt_from_disk_each_turn:
+                default_refresh_system_prompt_from_disk_each_turn(),
             thinking: crate::agent::thinking::ThinkingConfig::default(),
             history_pruning: crate::agent::history_pruner::HistoryPrunerConfig::default(),
             eval: crate::agent::eval::EvalConfig::default(),
@@ -2191,6 +2206,25 @@ impl Default for GatewayConfig {
             session_persistence: true,
             session_ttl_hours: 0,
             pairing_dashboard: PairingDashboardConfig::default(),
+        }
+    }
+}
+
+/// Web dashboard static files (`[webui]` section).
+///
+/// When `external_path` is set to a directory containing `index.html` (a Vite `web/dist`
+/// build), the gateway serves the UI from disk instead of embedded assets.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct WebUiConfig {
+    /// Directory with built dashboard (`index.html`, `assets/`, …). Empty uses embedded `web/dist/`.
+    #[serde(default)]
+    pub external_path: String,
+}
+
+impl Default for WebUiConfig {
+    fn default() -> Self {
+        Self {
+            external_path: String::new(),
         }
     }
 }
@@ -8272,6 +8306,7 @@ impl Default for Config {
             storage: StorageConfig::default(),
             tunnel: TunnelConfig::default(),
             gateway: GatewayConfig::default(),
+            webui: WebUiConfig::default(),
             composio: ComposioConfig::default(),
             microsoft365: Microsoft365Config::default(),
             secrets: SecretsConfig::default(),
@@ -10212,6 +10247,14 @@ impl Config {
             }
         }
 
+        // Web dashboard external dist: ZEROCLAW_WEBUI_EXTERNAL_PATH
+        if let Ok(path) = std::env::var("ZEROCLAW_WEBUI_EXTERNAL_PATH") {
+            let trimmed = path.trim();
+            if !trimmed.is_empty() {
+                self.webui.external_path = trimmed.to_string();
+            }
+        }
+
         // Allow public bind: ZEROCLAW_ALLOW_PUBLIC_BIND
         if let Ok(val) = std::env::var("ZEROCLAW_ALLOW_PUBLIC_BIND") {
             self.gateway.allow_public_bind = val == "1" || val.eq_ignore_ascii_case("true");
@@ -11410,6 +11453,7 @@ default_temperature = 0.7
             storage: StorageConfig::default(),
             tunnel: TunnelConfig::default(),
             gateway: GatewayConfig::default(),
+            webui: WebUiConfig::default(),
             composio: ComposioConfig::default(),
             microsoft365: Microsoft365Config::default(),
             secrets: SecretsConfig::default(),
@@ -11939,6 +11983,7 @@ default_temperature = 0.7
             storage: StorageConfig::default(),
             tunnel: TunnelConfig::default(),
             gateway: GatewayConfig::default(),
+            webui: WebUiConfig::default(),
             composio: ComposioConfig::default(),
             microsoft365: Microsoft365Config::default(),
             secrets: SecretsConfig::default(),

@@ -23,6 +23,11 @@ const FALLBACK_SLASH_COMMANDS: ChatSlashCommand[] = [
   { name: '/models', description: 'List providers or /models <provider> to switch' },
   { name: '/model', description: 'Show models or /model <id> to switch' },
   { name: '/config', description: 'Show current provider, model, and routes' },
+  { name: '/read', description: 'Read a workspace file from disk now (e.g. /read ok.md)' },
+  {
+    name: '/refresh',
+    description: 'Clear dynamic-context memo; optional path re-reads one file',
+  },
 ];
 
 /** Token from last whitespace (or line start) to cursor, for gateway-style slash commands. */

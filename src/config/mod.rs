@@ -34,7 +34,8 @@ pub use schema::{
     SopConfig, StorageConfig, StorageProviderConfig, StorageProviderSection, StreamMode,
     SwarmConfig, SwarmStrategy, TelegramConfig, TextBrowserConfig, ToolFilterGroup,
     ToolFilterGroupMode, ToolResultOffloadConfig, TranscriptionConfig, TtsConfig, TunnelConfig,
-    VerifiableIntentConfig, WebFetchConfig, WebSearchConfig, WebhookConfig, WhatsAppChatPolicy,
+    VerifiableIntentConfig, WebFetchConfig, WebSearchConfig, WebUiConfig, WebhookConfig,
+    WhatsAppChatPolicy,
     WhatsAppWebMode, WorkspaceConfig, DEFAULT_GWS_SERVICES,
 };
 
