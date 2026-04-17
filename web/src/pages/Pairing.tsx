@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Smartphone, Trash2 } from 'lucide-react';
 import { getAdminPairCode } from '../lib/api';
+import { runtimeFetch } from '@/lib/runtimeFetch';
 import { t } from '@/lib/i18n';
 
 interface Device {
@@ -22,7 +23,7 @@ export default function Pairing() {
 
   const fetchDevices = useCallback(async () => {
     try {
-      const res = await fetch('/api/devices', {
+      const res = await runtimeFetch('/api/devices', {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
@@ -53,7 +54,7 @@ export default function Pairing() {
 
   const handleInitiatePairing = async () => {
     try {
-      const res = await fetch('/api/pairing/initiate', {
+      const res = await runtimeFetch('/api/pairing/initiate', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -70,7 +71,7 @@ export default function Pairing() {
 
   const handleRevokeDevice = async (deviceId: string) => {
     try {
-      const res = await fetch(`/api/devices/${deviceId}`, {
+      const res = await runtimeFetch(`/api/devices/${deviceId}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       });

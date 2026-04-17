@@ -10,7 +10,7 @@ A fully containerized development sandbox for ZeroClaw agents. This environment 
     - Includes `bash`, `curl`, and debug tools.
 - **`sandbox/`**: Dockerfile for the simulated user environment.
     - Based on `ubuntu:22.04`.
-    - Pre-loaded with `git`, `python3`, `nodejs`, `npm`, `gcc`, `make`.
+    - Pre-loaded with `git`, `python3`, `bun`, `gcc`, `make`.
     - Simulates a real developer machine.
 - **`docker-compose.yml`**: Defines the services and `dev-net` network.
 - **`cli.sh`**: Helper script to manage the lifecycle.

@@ -845,3 +845,6 @@ timeout_secs = 60
 # [[shell.profiles]]
 # id = "research"
 # extends = "autonomous"
+
+# Added for web dev mock: pillar catalog optional keys
+native_tool_calling = false

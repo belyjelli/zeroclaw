@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { useLocation } from 'react-router-dom';
-import { LogOut, Settings } from 'lucide-react';
+import { Link, useLocation } from 'react-router-dom';
+import { LogOut, Settings, ClipboardList } from 'lucide-react';
 import { t } from '@/lib/i18n';
 import { useLocaleContext } from '@/App';
 import { useAuth } from '@/hooks/useAuth';
 import { SettingsModal } from '@/components/SettingsModal';
+import { useConfigTomlDraft } from '@/contexts/ConfigTomlDraftContext';
 
 const routeTitles: Record<string, string> = {
   '/': 'nav.dashboard',
@@ -24,8 +25,13 @@ export default function Header() {
   const { logout } = useAuth();
   const { locale, setAppLocale } = useLocaleContext();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const { isDirty: configDraftDirty } = useConfigTomlDraft();
 
-  const titleKey = routeTitles[location.pathname] ?? 'nav.dashboard';
+  const onConfigRoute =
+    location.pathname === '/config' || location.pathname.startsWith('/config/');
+  const titleKey =
+    routeTitles[location.pathname]
+    ?? (location.pathname.startsWith('/config/') ? 'nav.config' : 'nav.dashboard');
   const pageTitle = t(titleKey);
 
   const toggleLanguage = () => {
@@ -42,6 +48,20 @@ export default function Header() {
 
         {/* Right-side controls */}
         <div className="flex items-center gap-2 h-9">
+          {configDraftDirty && onConfigRoute && (
+            <Link
+              to="/config"
+              className="hidden sm:flex h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-semibold no-underline transition-colors"
+              style={{
+                borderColor: 'var(--pc-accent-dim)',
+                background: 'var(--pc-accent-glow)',
+                color: 'var(--pc-accent-light)',
+              }}
+            >
+              <ClipboardList className="h-3.5 w-3.5" />
+              {t('config.header.review_changes')}
+            </Link>
+          )}
           {/* Settings */}
           <button
             type="button"

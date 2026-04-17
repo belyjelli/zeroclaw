@@ -14,6 +14,11 @@ import {
   isAuthenticated as checkAuth,
 } from '../lib/auth';
 import { pair as apiPair, getPublicHealth } from '../lib/api';
+import {
+  allowDashboardWithoutGatewayHealth,
+  getWebDevMockSection,
+  isWebDevMockActive,
+} from '../lib/devMockConfig';
 
 // ---------------------------------------------------------------------------
 // Context shape
@@ -45,14 +50,35 @@ export interface AuthProviderProps {
 }
 
 export function AuthProvider({ children }: AuthProviderProps) {
-  const [token, setTokenState] = useState<string | null>(readToken);
-  const [authenticated, setAuthenticated] = useState<boolean>(checkAuth);
-  const [requiresPairing, setRequiresPairing] = useState<boolean>(true);
-  const [loading, setLoading] = useState<boolean>(!checkAuth());
+  const mockActive = isWebDevMockActive();
+  /** `bun run dev`: Vite client + mock not explicitly off → dashboard without gateway /health. */
+  const localDevDashboard = allowDashboardWithoutGatewayHealth();
+  const openDashboard = mockActive || localDevDashboard;
 
-  // On mount: check if server requires pairing at all
+  const [token, setTokenState] = useState<string | null>(readToken);
+  const [authenticated, setAuthenticated] = useState<boolean>(() => openDashboard || checkAuth());
+  const [requiresPairing, setRequiresPairing] = useState<boolean>(() => !openDashboard);
+  const [loading, setLoading] = useState<boolean>(() => {
+    if (openDashboard) return false;
+    return !checkAuth();
+  });
+
   useEffect(() => {
-    if (checkAuth()) return; // already have a token, no need to check
+    if (!mockActive) return;
+    const sec = getWebDevMockSection();
+    if (!sec?.inject_fake_bearer_token) return;
+    const t = sec.fake_bearer_token?.trim() || 'dev-mock-bearer';
+    writeToken(t);
+    setTokenState(t);
+    setAuthenticated(true);
+  }, [mockActive]);
+
+  // On mount: check if server requires pairing at all (skipped in Vite dev unless mock is explicitly off)
+  useEffect(() => {
+    if (mockActive || checkAuth() || localDevDashboard) {
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     getPublicHealth()
       .then((health) => {
@@ -63,7 +89,16 @@ export function AuthProvider({ children }: AuthProviderProps) {
         }
       })
       .catch(() => {
-        // health endpoint unreachable — fall back to showing pairing dialog
+        if (import.meta.env.DEV || import.meta.hot) {
+          console.info(
+            "[ZeroClaw web] Gateway /health unreachable. If you expected a real gateway, set VITE_WEB_DEV_MOCK=0 in web/.env.development and use a Vite proxy or open the dashboard from the gateway.",
+          );
+        }
+        // Vite dev without a gateway: /health is often HTML or 404; do not block the UI on pairing.
+        if (!cancelled && allowDashboardWithoutGatewayHealth()) {
+          setRequiresPairing(false);
+          setAuthenticated(true);
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -71,7 +106,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [mockActive, localDevDashboard]);
 
   // Keep state in sync if localStorage is changed in another tab
   useEffect(() => {
@@ -96,6 +131,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const logout = useCallback((): void => {
     removeToken();
     setTokenState(null);
+    if (isWebDevMockActive() || allowDashboardWithoutGatewayHealth()) {
+      setAuthenticated(true);
+      return;
+    }
     setAuthenticated(false);
   }, []);
 

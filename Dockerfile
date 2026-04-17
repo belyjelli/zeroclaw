@@ -1,12 +1,12 @@
 # syntax=docker/dockerfile:1.7
 
 # ── Stage 0: Frontend build ─────────────────────────────────────
-FROM node:22-alpine AS web-builder
+FROM oven/bun:1.3-alpine AS web-builder
 WORKDIR /web
-COPY web/package.json web/package-lock.json* ./
-RUN npm ci --ignore-scripts 2>/dev/null || npm install --ignore-scripts
+COPY web/package.json web/bun.lock ./
+RUN bun install --frozen-lockfile
 COPY web/ .
-RUN npm run build
+RUN bun run build
 
 # ── Stage 1: Build ────────────────────────────────────────────
 FROM rust:1.94-slim@sha256:da9dab7a6b8dd428e71718402e97207bb3e54167d37b5708616050b1e8f60ed6 AS builder

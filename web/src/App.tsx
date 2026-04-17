@@ -9,6 +9,7 @@ import Cron from './pages/Cron';
 import Integrations from './pages/Integrations';
 import Memory from './pages/Memory';
 import Config from './pages/Config';
+import ConfigPillarPage from './pages/config/ConfigPillarPage';
 import Cost from './pages/Cost';
 import Logs from './pages/Logs';
 import Doctor from './pages/Doctor';
@@ -16,6 +17,7 @@ import Pairing from './pages/Pairing';
 import Canvas from './pages/Canvas';
 import { AuthProvider, useAuth } from './hooks/useAuth';
 import { DraftContext, useDraftStore } from './hooks/useDraft';
+import { ConfigTomlDraftProvider } from './contexts/ConfigTomlDraftContext';
 import { setLocale, type Locale } from './lib/i18n';
 import { basePath } from './lib/basePath';
 import { getAdminPairCode } from './lib/api';
@@ -133,7 +135,7 @@ function PairingDialog({ onPair }: { onPair: (code: string) => Promise<void> }) 
 
         <div className="text-center mb-8">
           <img
-            src={`${basePath}/_app/zeroclaw-trans.png`}
+            src={`${basePath}/zeroclaw-trans.png`}
             alt="ZeroClaw"
             className="h-20 w-20 rounded-2xl object-cover mx-auto mb-4 animate-float"
             onError={(e) => { e.currentTarget.style.display = 'none'; }}
@@ -222,23 +224,27 @@ function AppContent() {
   return (
     <DraftContext.Provider value={draftStore}>
       <LocaleContext.Provider value={{ locale, setAppLocale }}>
+        <ConfigTomlDraftProvider>
         <Routes>
+          {/* Pathless layout + relative child paths: basename-safe under `/_app/` (React Router v7). */}
           <Route element={<Layout />}>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/agent" element={<AgentChat />} />
-            <Route path="/tools" element={<Tools />} />
-            <Route path="/cron" element={<Cron />} />
-            <Route path="/integrations" element={<Integrations />} />
-            <Route path="/memory" element={<Memory />} />
-            <Route path="/config" element={<Config />} />
-            <Route path="/cost" element={<Cost />} />
-            <Route path="/logs" element={<Logs />} />
-            <Route path="/doctor" element={<Doctor />} />
-            <Route path="/pairing" element={<Pairing />} />
-            <Route path="/canvas" element={<Canvas />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
+            <Route index element={<Dashboard />} />
+            <Route path="agent" element={<AgentChat />} />
+            <Route path="tools" element={<Tools />} />
+            <Route path="cron" element={<Cron />} />
+            <Route path="integrations" element={<Integrations />} />
+            <Route path="memory" element={<Memory />} />
+            <Route path="config" element={<Config />} />
+            <Route path="config/:pillar" element={<ConfigPillarPage />} />
+            <Route path="cost" element={<Cost />} />
+            <Route path="logs" element={<Logs />} />
+            <Route path="doctor" element={<Doctor />} />
+            <Route path="pairing" element={<Pairing />} />
+            <Route path="canvas" element={<Canvas />} />
+            <Route path="*" element={<Navigate to="." replace />} />
           </Route>
         </Routes>
+        </ConfigTomlDraftProvider>
       </LocaleContext.Provider>
     </DraftContext.Provider>
   );

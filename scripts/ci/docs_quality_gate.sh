@@ -51,12 +51,14 @@ if [ "${#EXISTING_FILES[@]}" -eq 0 ]; then
     exit 0
 fi
 
-if command -v npx >/dev/null 2>&1; then
+if command -v bun >/dev/null 2>&1; then
+    MD_CMD=(bunx --bun markdownlint-cli2@0.20.0)
+elif command -v npx >/dev/null 2>&1; then
     MD_CMD=(npx --yes markdownlint-cli2@0.20.0)
 elif command -v markdownlint-cli2 >/dev/null 2>&1; then
     MD_CMD=(markdownlint-cli2)
 else
-    echo "markdownlint-cli2 is required (via npx or local binary)."
+    echo "markdownlint-cli2 is required (install Bun, Node/npx, or markdownlint-cli2)."
     exit 1
 fi
 

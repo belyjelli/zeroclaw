@@ -32,7 +32,7 @@ pub async fn handle_spa_fallback(State(state): State<AppState>) -> Response {
     let Some(content) = WebAssets::get("index.html") else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            "Web dashboard not available. Build it with: cd web && npm ci && npm run build",
+            "Web dashboard not available. Build it with: cd web && bun install && bun run build",
         )
             .into_response();
     };

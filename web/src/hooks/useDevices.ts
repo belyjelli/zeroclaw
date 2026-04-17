@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { runtimeFetch } from '@/lib/runtimeFetch';
 
 interface Device {
   id: string;
@@ -19,7 +20,7 @@ export function useDevices() {
   const fetchDevices = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/devices', {
+      const res = await runtimeFetch('/api/devices', {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {

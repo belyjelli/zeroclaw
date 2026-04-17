@@ -1,6 +1,7 @@
 import type { WsMessage } from '../types/api';
 import { getToken } from './auth';
 import { apiOrigin, basePath } from './basePath';
+import { isWebDevMockActive, getWebDevMockSection } from './devMockConfig';
 import { isTauri } from './tauri';
 import { generateUUID } from './uuid';
 
@@ -37,6 +38,8 @@ function getOrCreateSessionId(): string {
 
 export class WebSocketClient {
   private ws: WebSocket | null = null;
+  /** When set, `connect()` skipped the real socket (web dev mock). */
+  private devMockOpen = false;
   private currentDelay: number;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private intentionallyClosed = false;
@@ -71,6 +74,16 @@ export class WebSocketClient {
   connect(): void {
     this.intentionallyClosed = false;
     this.clearReconnectTimer();
+
+    if (isWebDevMockActive()) {
+      this.devMockOpen = true;
+      queueMicrotask(() => {
+        this.onOpen?.();
+      });
+      return;
+    }
+
+    this.devMockOpen = false;
 
     const token = getToken();
     const sessionId = getOrCreateSessionId();
@@ -109,6 +122,18 @@ export class WebSocketClient {
 
   /** Send a chat message to the agent. */
   sendMessage(content: string): void {
+    if (this.devMockOpen) {
+      const echo = getWebDevMockSection()?.websocket_echo !== false;
+      if (!echo) {
+        throw new Error('WebSocket is not connected');
+      }
+      queueMicrotask(() => {
+        const reply = `[dev-mock] ${content}`;
+        this.onMessage?.({ type: 'chunk', content: reply });
+        this.onMessage?.({ type: 'done', full_response: reply });
+      });
+      return;
+    }
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error('WebSocket is not connected');
     }
@@ -119,6 +144,7 @@ export class WebSocketClient {
   disconnect(): void {
     this.intentionallyClosed = true;
     this.clearReconnectTimer();
+    this.devMockOpen = false;
     if (this.ws) {
       this.ws.close();
       this.ws = null;
@@ -127,6 +153,7 @@ export class WebSocketClient {
 
   /** Returns true if the socket is open. */
   get connected(): boolean {
+    if (this.devMockOpen) return true;
     return this.ws?.readyState === WebSocket.OPEN;
   }
 

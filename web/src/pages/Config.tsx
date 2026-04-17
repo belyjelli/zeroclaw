@@ -1,13 +1,19 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   Settings,
   Save,
   CheckCircle,
   AlertTriangle,
   ShieldAlert,
+  Download,
+  Undo2,
 } from 'lucide-react';
-import { getConfig, putConfig } from '@/lib/api';
+import { putConfig } from '@/lib/api';
 import { t } from '@/lib/i18n';
+import { useConfigTomlDraft } from '@/contexts/ConfigTomlDraftContext';
+import { computeCatalogDiff } from '@/lib/configChangeSummary';
+import { CONFIG_PILLAR_IDS } from '@/lib/configPillarCatalog';
+import { downloadTextFile } from '@/lib/downloadTextFile';
 
 
 // ---------------------------------------------------------------------------
@@ -95,8 +101,28 @@ function colorScalar(v: string): string {
 }
 
 export default function Config() {
-  const [config, setConfig] = useState('');
-  const [loading, setLoading] = useState(true);
+  const {
+    toml: config,
+    setWorkingToml: setConfig,
+    baselineToml,
+    loadState,
+    loadError,
+    refreshFromServer,
+    isDirty,
+    markSaved,
+    discardLocal,
+  } = useConfigTomlDraft();
+
+  const catalogDiff = useMemo(
+    () => computeCatalogDiff(baselineToml, config),
+    [baselineToml, config],
+  );
+
+  const highImpactChanges = useMemo(
+    () => catalogDiff.filter((e) => e.highImpact),
+    [catalogDiff],
+  );
+
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -111,12 +137,8 @@ export default function Config() {
     }
   }, []);
 
-  useEffect(() => {
-    getConfig()
-      .then((data) => { setConfig(typeof data === 'string' ? data : JSON.stringify(data, null, 2)); })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
-  }, []);
+  const loading = loadState === 'loading' && config.length === 0;
+  const loadFailed = loadState === 'error';
 
   const handleSave = async () => {
     setSaving(true);
@@ -124,12 +146,23 @@ export default function Config() {
     setSuccess(null);
     try {
       await putConfig(config);
+      markSaved(config);
       setSuccess(t('config.save_success'));
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : t('config.save_error'));
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleExportWorking = () => {
+    downloadTextFile('config.toml', config, 'application/toml');
+  };
+
+  const handleDiscardAll = () => {
+    if (!isDirty) return;
+    if (!window.confirm(t('config.toolbar.discard_confirm'))) return;
+    discardLocal();
   };
 
   // Auto-dismiss success after 4 seconds
@@ -147,18 +180,125 @@ export default function Config() {
     );
   }
 
+  if (loadFailed && !config.length) {
+    return (
+      <div className="flex flex-col h-full p-6 gap-4 animate-fade-in">
+        <p className="text-sm" style={{ color: 'var(--color-status-error)' }}>{loadError}</p>
+        <button type="button" className="btn-electric text-sm px-4 py-2 w-fit" onClick={() => void refreshFromServer()}>
+          {t('common.retry')}
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full p-6 gap-6 animate-fade-in overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-2">
           <Settings className="h-5 w-5" style={{ color: 'var(--pc-accent)' }} />
           <h2 className="text-sm font-semibold uppercase tracking-wider" style={{ color: 'var(--pc-text-primary)' }}>{t('config.configuration_title')}</h2>
         </div>
-        <button onClick={handleSave} disabled={saving} className="btn-electric flex items-center gap-2 text-sm px-4 py-2">
-          <Save className="h-4 w-4" />{saving ? t('config.saving') : t('config.save')}
-        </button>
+        <div className="flex flex-wrap items-center gap-2 justify-end">
+          <button
+            type="button"
+            onClick={handleExportWorking}
+            className="flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-xl border transition-colors"
+            style={{ borderColor: 'var(--pc-border)', color: 'var(--pc-text-secondary)', background: 'var(--pc-bg-surface)' }}
+          >
+            <Download className="h-3.5 w-3.5" />
+            {t('config.toolbar.export_toml')}
+          </button>
+          <button
+            type="button"
+            onClick={handleDiscardAll}
+            disabled={!isDirty}
+            className="flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-xl border transition-colors disabled:opacity-40"
+            style={{ borderColor: 'var(--pc-border)', color: 'var(--pc-text-secondary)', background: 'var(--pc-bg-surface)' }}
+          >
+            <Undo2 className="h-3.5 w-3.5" />
+            {t('config.toolbar.discard_all')}
+          </button>
+          <button onClick={handleSave} disabled={saving} className="btn-electric flex items-center gap-2 text-sm px-4 py-2">
+            <Save className="h-4 w-4" />{saving ? t('config.saving') : t('config.review.apply_save')}
+          </button>
+        </div>
       </div>
+
+      {isDirty && (
+        <div
+          className="rounded-xl border px-4 py-3 text-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2"
+          style={{ borderColor: 'var(--pc-accent-dim)', background: 'var(--pc-accent-glow)', color: 'var(--pc-text-secondary)' }}
+        >
+          <span>{t('config.raw.unsaved_editor')}</span>
+          <span className="text-xs font-mono" style={{ color: 'var(--pc-text-faint)' }}>{t('config.raw.unsaved_hint')}</span>
+        </div>
+      )}
+
+      {isDirty && catalogDiff.length > 0 && (
+        <details
+          open
+          className="rounded-2xl border overflow-hidden shrink-0"
+          style={{ borderColor: 'var(--pc-border)', background: 'var(--pc-bg-surface)' }}
+        >
+          <summary
+            className="cursor-pointer px-4 py-3 text-sm font-semibold list-none flex items-center justify-between gap-2"
+            style={{ color: 'var(--pc-text-primary)' }}
+          >
+            <span>{t('config.summary.title')}</span>
+            <span className="text-[10px] font-normal uppercase tracking-wider" style={{ color: 'var(--pc-text-faint)' }}>
+              {catalogDiff.length}
+            </span>
+          </summary>
+          <div className="px-4 pb-4 space-y-4 border-t" style={{ borderColor: 'var(--pc-border)' }}>
+            {highImpactChanges.length > 0 && (
+              <div
+                className="mt-3 rounded-xl border px-3 py-2.5 text-xs leading-relaxed"
+                style={{ borderColor: 'rgba(255, 170, 0, 0.25)', background: 'rgba(255, 170, 0, 0.06)', color: 'var(--color-status-warning)' }}
+              >
+                {t('config.summary.high_impact')}
+              </div>
+            )}
+            {CONFIG_PILLAR_IDS.map((pillar) => {
+              const rows = catalogDiff.filter((e) => e.pillar === pillar);
+              if (rows.length === 0) return null;
+              const titleKey = `config.pillar.${pillar}.title` as const;
+              return (
+                <section key={pillar}>
+                  <h3 className="text-[11px] font-bold uppercase tracking-wider mb-2" style={{ color: 'var(--pc-accent-light)' }}>
+                    {t(titleKey)}
+                  </h3>
+                  <ul className="space-y-2 text-xs font-mono">
+                    {rows.map((row) => (
+                      <li
+                        key={`${pillar}-${row.pathStr}`}
+                        className="rounded-lg border px-3 py-2"
+                        style={{ borderColor: 'var(--pc-border)', background: 'var(--pc-bg-base)' }}
+                      >
+                        <div className="text-[10px] uppercase tracking-wide mb-1" style={{ color: 'var(--pc-text-faint)' }}>
+                          {row.pathStr}
+                          {row.highImpact ? ` · ${t('config.summary.impact_badge')}` : ''}
+                        </div>
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2" style={{ color: 'var(--pc-text-secondary)' }}>
+                          <span className="line-through opacity-70 break-all">{row.beforeLabel}</span>
+                          <span className="hidden sm:inline" aria-hidden>→</span>
+                          <span className="break-all">{row.afterLabel}</span>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              );
+            })}
+          </div>
+        </details>
+      )}
+
+      {isDirty && catalogDiff.length === 0 && (
+        <p className="text-xs rounded-xl border px-3 py-2" style={{ borderColor: 'var(--pc-border)', color: 'var(--pc-text-muted)' }}>
+          {t('config.summary.outside_catalog')}
+        </p>
+      )}
 
       {/* Sensitive fields note */}
       <div className="flex items-start gap-3 rounded-2xl p-4 border" style={{ borderColor: 'rgba(255, 170, 0, 0.2)', background: 'rgba(255, 170, 0, 0.05)' }}>

@@ -193,7 +193,7 @@ If a Total Phase Aardvark adapter is connected, the `hardware` feature enables I
 - **Provider**: `anthropic-custom:https://api.z.ai/api/anthropic`
 - **Model**: `claude-3-5-sonnet-20241022`
 - **Autonomy**: `full`
-- **Allowed shell commands**: `git`, `cargo`, `npm`, `mkdir`, `touch`, `cp`, `mv`, `ls`, `cat`, `grep`, `find`, `echo`, `pwd`, `wc`, `head`, `tail`, `date`
+- **Allowed shell commands**: `git`, `cargo`, `bun`, `mkdir`, `touch`, `cp`, `mv`, `ls`, `cat`, `grep`, `find`, `echo`, `pwd`, `wc`, `head`, `tail`, `date`
 
 To customise, edit `~/.zeroclaw/config.toml` directly on the Pi and restart the service.
 

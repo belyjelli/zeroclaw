@@ -3,6 +3,7 @@ import { Monitor, Trash2, History, RefreshCw } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { basePath } from '@/lib/basePath';
 import { getToken } from '@/lib/auth';
+import { isWebDevMockActive } from '@/lib/devMockConfig';
 
 interface CanvasFrame {
   frame_id: string;
@@ -39,6 +40,12 @@ export default function Canvas() {
   const connectWs = useCallback((id: string) => {
     if (wsRef.current) {
       wsRef.current.close();
+    }
+
+    if (isWebDevMockActive()) {
+      wsRef.current = null;
+      setConnected(true);
+      return;
     }
 
     const token = getToken();

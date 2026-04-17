@@ -20,5 +20,10 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true
   },
-  "include": ["vite.config.ts"]
+  "include": [
+    "vite.config.ts",
+    "vite-plugin-dev-mock-toml.ts",
+    "vite-plugin-bun-dev-hack.ts",
+    "vite-plugin-dev-root-module-rewrite.ts"
+  ]
 }

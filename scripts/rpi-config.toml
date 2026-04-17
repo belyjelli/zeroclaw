@@ -30,6 +30,7 @@ workspace_only = false
 allowed_commands = [
     "git",
     "npm",
+    "bun",
     "cargo",
     "mkdir",
     "touch",

@@ -12,6 +12,7 @@ import type {
 } from '../types/api';
 import { clearToken, getToken, setToken } from './auth';
 import { apiOrigin, basePath } from './basePath';
+import { runtimeFetch } from './runtimeFetch';
 
 // ---------------------------------------------------------------------------
 // Base fetch wrapper
@@ -43,7 +44,7 @@ export async function apiFetch<T = unknown>(
     headers.set('Content-Type', 'application/json');
   }
 
-  const response = await fetch(`${apiOrigin}${basePath}${path}`, { ...options, headers });
+  const response = await runtimeFetch(`${apiOrigin}${basePath}${path}`, { ...options, headers });
 
   if (response.status === 401) {
     clearToken();
@@ -79,7 +80,7 @@ function unwrapField<T>(value: T | Record<string, T>, key: string): T {
 // ---------------------------------------------------------------------------
 
 export async function pair(code: string): Promise<{ token: string }> {
-  const response = await fetch(`${basePath}/pair`, {
+  const response = await runtimeFetch(`${basePath}/pair`, {
     method: 'POST',
     headers: { 'X-Pairing-Code': code },
   });
@@ -95,7 +96,7 @@ export async function pair(code: string): Promise<{ token: string }> {
 }
 
 export async function getAdminPairCode(): Promise<{ pairing_code: string | null; pairing_required: boolean }> {
-  const response = await fetch('/admin/paircode');
+  const response = await runtimeFetch('/admin/paircode');
   if (!response.ok) {
     throw new Error(`Failed to fetch pairing code (${response.status})`);
   }
@@ -107,7 +108,7 @@ export async function getAdminPairCode(): Promise<{ pairing_code: string | null;
 // ---------------------------------------------------------------------------
 
 export async function getPublicHealth(): Promise<{ require_pairing: boolean; paired: boolean }> {
-  const response = await fetch(`${basePath}/health`);
+  const response = await runtimeFetch(`${basePath}/health`);
   if (!response.ok) {
     throw new Error(`Health check failed (${response.status})`);
   }

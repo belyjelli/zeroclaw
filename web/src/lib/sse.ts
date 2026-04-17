@@ -1,6 +1,7 @@
 import type { SSEEvent } from '../types/api';
 import { getToken } from './auth';
 import { apiOrigin, basePath } from './basePath';
+import { runtimeFetch } from './runtimeFetch';
 
 export type SSEEventHandler = (event: SSEEvent) => void;
 export type SSEErrorHandler = (error: Event | Error) => void;
@@ -63,7 +64,7 @@ export class SSEClient {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    fetch(this.path, {
+    runtimeFetch(this.path, {
       headers,
       signal: this.controller.signal,
     })
