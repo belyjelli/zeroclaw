@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Send, Bot, User, AlertCircle, Copy, Check } from 'lucide-react';
+import { Send, Bot, User, AlertCircle, Copy, Check, MessageSquarePlus } from 'lucide-react';
 import type { WsMessage } from '@/types/api';
 import { WebSocketClient } from '@/lib/ws';
 import { generateUUID } from '@/lib/uuid';
@@ -9,7 +9,7 @@ import { t } from '@/lib/i18n';
 
 interface ChatMessage {
   id: string;
-  role: 'user' | 'agent';
+  role: 'user' | 'agent' | 'system';
   content: string;
   timestamp: Date;
 }
@@ -20,6 +20,7 @@ const DRAFT_KEY = 'agent-chat';
 const FALLBACK_SLASH_COMMANDS: ChatSlashCommand[] = [
   { name: '/new', description: 'Clear this chat session and start fresh' },
   { name: '/reset', description: 'Same as /new' },
+  { name: '/fresh-session', description: 'Same as /new (explicit fresh session)' },
   { name: '/models', description: 'List providers or /models <provider> to switch' },
   { name: '/model', description: 'Show models or /model <id> to switch' },
   { name: '/config', description: 'Show current provider, model, and routes' },
@@ -37,6 +38,12 @@ function getSlashToken(value: string, cursor: number): { token: string; tokenSta
   const token = m?.[1];
   if (token === undefined || !token.startsWith('/')) return null;
   return { token, tokenStart: before.length - token.length };
+}
+
+const EXACT_NEW_SESSION_COMMANDS = new Set(['/new', '/reset', '/fresh-session']);
+
+function isExactNewSessionSlash(text: string): boolean {
+  return EXACT_NEW_SESSION_COMMANDS.has(text.trim());
 }
 
 export default function AgentChat() {
@@ -58,6 +65,10 @@ export default function AgentChat() {
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
   const [slashPickerSuppressed, setSlashPickerSuppressed] = useState(false);
   const prevSlashTokenLenRef = useRef(0);
+  const [sessionStatusLabel, setSessionStatusLabel] = useState<string | null>(null);
+  const [navToast, setNavToast] = useState<string | null>(null);
+  const suppressFreshNavToastRef = useRef(false);
+  const navToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const slashHintLine = useMemo(() => {
     if (slashCommands.length === 0) return t('agent.slash_hint');
@@ -124,6 +135,27 @@ export default function AgentChat() {
 
     ws.onMessage = (msg: WsMessage) => {
       switch (msg.type) {
+        case 'session_start': {
+          const resumed = msg.resumed === true;
+          const count = msg.message_count ?? 0;
+          setSessionStatusLabel(
+            resumed
+              ? `${t('agent.session_status_resumed')}${count > 0 ? ` · ${count}` : ''}`
+              : t('agent.session_status_fresh'),
+          );
+          const hadFresh = ws.takeFreshConnectFlag();
+          if (hadFresh && !resumed && !suppressFreshNavToastRef.current) {
+            if (navToastTimerRef.current) clearTimeout(navToastTimerRef.current);
+            setNavToast(t('agent.session_fresh_nav_toast'));
+            navToastTimerRef.current = setTimeout(() => {
+              setNavToast(null);
+              navToastTimerRef.current = null;
+            }, 4500);
+          }
+          suppressFreshNavToastRef.current = false;
+          break;
+        }
+
         case 'chunk':
           setTyping(true);
           pendingContentRef.current += msg.content ?? '';
@@ -181,6 +213,9 @@ export default function AgentChat() {
           ]);
           break;
 
+        case 'connected':
+          break;
+
         case 'error':
           setMessages((prev) => [
             ...prev,
@@ -207,6 +242,10 @@ export default function AgentChat() {
     wsRef.current = ws;
 
     return () => {
+      if (navToastTimerRef.current) {
+        clearTimeout(navToastTimerRef.current);
+        navToastTimerRef.current = null;
+      }
       ws.disconnect();
     };
   }, []);
@@ -260,6 +299,34 @@ export default function AgentChat() {
     const trimmed = input.trim();
     if (!trimmed || !wsRef.current?.connected) return;
 
+    if (isExactNewSessionSlash(trimmed)) {
+      const ws = wsRef.current;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: generateUUID(),
+          role: 'user',
+          content: trimmed,
+          timestamp: new Date(),
+        },
+        {
+          id: generateUUID(),
+          role: 'system',
+          content: t('agent.session_cleared_in_chat'),
+          timestamp: new Date(),
+        },
+      ]);
+      suppressFreshNavToastRef.current = true;
+      ws.rotateSessionId();
+      setInput('');
+      clearDraft();
+      if (inputRef.current) {
+        inputRef.current.style.height = 'auto';
+        inputRef.current.focus();
+      }
+      return;
+    }
+
     setMessages((prev) => [
       ...prev,
       {
@@ -284,6 +351,22 @@ export default function AgentChat() {
       inputRef.current.style.height = 'auto';
       inputRef.current.focus();
     }
+  };
+
+  const handleNewSessionButton = () => {
+    const ws = wsRef.current;
+    if (!ws?.connected) return;
+    suppressFreshNavToastRef.current = true;
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: generateUUID(),
+        role: 'system',
+        content: t('agent.session_cleared_in_chat'),
+        timestamp: new Date(),
+      },
+    ]);
+    ws.rotateSessionId();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -367,7 +450,20 @@ export default function AgentChat() {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3.5rem)]">
+    <div className="flex flex-col h-[calc(100vh-3.5rem)] relative">
+      {navToast && (
+        <div
+          className="absolute top-3 left-1/2 -translate-x-1/2 z-30 px-4 py-2 rounded-xl text-xs border shadow-lg max-w-md text-center animate-fade-in"
+          style={{
+            background: 'var(--pc-bg-elevated)',
+            borderColor: 'var(--pc-border)',
+            color: 'var(--pc-text-primary)',
+          }}
+          role="status"
+        >
+          {navToast}
+        </div>
+      )}
       {/* Connection status bar */}
       {error && (
         <div className="px-4 py-2 border-b flex items-center gap-2 text-sm animate-fade-in" style={{ background: 'rgba(239, 68, 68, 0.08)', borderColor: 'rgba(239, 68, 68, 0.2)', color: '#f87171', }}>
@@ -392,29 +488,48 @@ export default function AgentChat() {
           <div
             key={msg.id}
             className={`group flex items-start gap-3 ${
-              msg.role === 'user' ? 'flex-row-reverse animate-slide-in-right' : 'animate-slide-in-left'
+              msg.role === 'user'
+                ? 'flex-row-reverse animate-slide-in-right'
+                : msg.role === 'system'
+                  ? 'justify-center animate-fade-in'
+                  : 'animate-slide-in-left'
             }`}
             style={{ animationDelay: `${Math.min(idx * 30, 200)}ms` }}
           >
             <div
               className="flex-shrink-0 w-9 h-9 rounded-2xl flex items-center justify-center border"
               style={{
-                background: msg.role === 'user' ? 'var(--pc-accent)' : 'var(--pc-bg-elevated)',
-                borderColor: msg.role === 'user' ? 'var(--pc-accent)' : 'var(--pc-border)',
+                background:
+                  msg.role === 'user'
+                    ? 'var(--pc-accent)'
+                    : msg.role === 'system'
+                      ? 'var(--pc-bg-surface)'
+                      : 'var(--pc-bg-elevated)',
+                borderColor:
+                  msg.role === 'user' ? 'var(--pc-accent)' : 'var(--pc-border)',
               }}
             >
               {msg.role === 'user' ? (
                 <User className="h-4 w-4 text-white" />
+              ) : msg.role === 'system' ? (
+                <Bot className="h-4 w-4" style={{ color: 'var(--pc-text-muted)' }} />
               ) : (
                 <Bot className="h-4 w-4" style={{ color: 'var(--pc-accent)' }} />
               )}
             </div>
-            <div className="relative max-w-[75%]">
+            <div className={`relative ${msg.role === 'system' ? 'max-w-[90%] mx-auto' : 'max-w-[75%]'}`}>
               <div
                 className="rounded-2xl px-4 py-3 border"
                 style={
                   msg.role === 'user'
                     ? { background: 'var(--pc-accent-glow)', borderColor: 'var(--pc-accent-dim)', color: 'var(--pc-text-primary)', }
+                    : msg.role === 'system'
+                      ? {
+                          background: 'var(--pc-bg-surface)',
+                          borderColor: 'var(--pc-border)',
+                          color: 'var(--pc-text-muted)',
+                          fontStyle: 'italic',
+                        }
                     : { background: 'var(--pc-bg-elevated)', borderColor: 'var(--pc-border)', color: 'var(--pc-text-primary)', }
                 }
               >
@@ -427,7 +542,7 @@ export default function AgentChat() {
               <button
                 onClick={() => handleCopy(msg.id, msg.content)}
                 aria-label={t('agent.copy_message')}
-                className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-all p-1.5 rounded-xl"
+                className={`absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-all p-1.5 rounded-xl ${msg.role === 'system' ? 'hidden' : ''}`}
                 style={{ background: 'var(--pc-bg-elevated)', border: '1px solid var(--pc-border)', color: 'var(--pc-text-muted)', }}
                 onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--pc-text-primary)'; e.currentTarget.style.borderColor = 'var(--pc-accent-dim)'; }}
                 onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--pc-text-muted)'; e.currentTarget.style.borderColor = 'var(--pc-border)'; }}
@@ -529,7 +644,7 @@ export default function AgentChat() {
             <Send className="h-5 w-5" />
           </button>
         </div>
-        <div className="flex items-center justify-center mt-2 gap-2">
+        <div className="flex items-center justify-center mt-2 gap-3 flex-wrap">
           <span
             className="status-dot"
             style={connected
@@ -540,6 +655,26 @@ export default function AgentChat() {
           <span className="text-[10px]" style={{ color: 'var(--pc-text-faint)' }}>
             {connected ? t('agent.connected_status') : t('agent.disconnected_status')}
           </span>
+          {sessionStatusLabel && (
+            <span className="text-[10px] font-mono" style={{ color: 'var(--pc-text-muted)' }}>
+              {sessionStatusLabel}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={handleNewSessionButton}
+            disabled={!connected}
+            aria-label={t('agent.new_session_aria')}
+            className="text-[10px] px-2 py-1 rounded-lg border flex items-center gap-1 disabled:opacity-40 transition-colors"
+            style={{
+              borderColor: 'var(--pc-border)',
+              color: 'var(--pc-text-muted)',
+              background: 'var(--pc-bg-elevated)',
+            }}
+          >
+            <MessageSquarePlus className="h-3.5 w-3.5" />
+            {t('agent.new_session_button')}
+          </button>
         </div>
         <p
           className="text-center text-[10px] mt-2 max-w-4xl mx-auto leading-relaxed px-2"

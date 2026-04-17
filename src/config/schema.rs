@@ -2147,6 +2147,11 @@ pub struct GatewayConfig {
     #[serde(default)]
     pub session_ttl_hours: u32,
 
+    /// When true, the web dashboard keeps the same gateway chat `session_id` across full page
+    /// reloads (legacy behavior). Default false: each navigation gets a fresh session id client-side.
+    #[serde(default)]
+    pub web_chat_preserve_session_on_navigation: bool,
+
     /// Pairing dashboard configuration
     #[serde(default)]
     pub pairing_dashboard: PairingDashboardConfig,
@@ -2205,6 +2210,7 @@ impl Default for GatewayConfig {
             idempotency_max_keys: default_gateway_idempotency_max_keys(),
             session_persistence: true,
             session_ttl_hours: 0,
+            web_chat_preserve_session_on_navigation: false,
             pairing_dashboard: PairingDashboardConfig::default(),
         }
     }
@@ -12873,6 +12879,7 @@ channel_id = "C123"
             idempotency_max_keys: 4096,
             session_persistence: true,
             session_ttl_hours: 0,
+            web_chat_preserve_session_on_navigation: false,
             pairing_dashboard: PairingDashboardConfig::default(),
         };
         let toml_str = toml::to_string(&g).unwrap();

@@ -77,6 +77,7 @@ function mockStatus() {
       external_path: null,
       path_prefix_rewrite: false,
     },
+    web_chat_preserve_session_on_navigation: false,
   };
 }
 

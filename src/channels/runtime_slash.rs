@@ -95,7 +95,7 @@ pub fn parse_gateway_ws_slash(content: &str) -> Option<ParsedRuntimeSlash> {
         .next()
         .unwrap_or("")
         .to_ascii_lowercase();
-    if base == "/reset" {
+    if base == "/reset" || base == "/fresh-session" {
         return Some(ParsedRuntimeSlash::NewSession);
     }
     parse_runtime_slash("gateway", content)
@@ -268,6 +268,10 @@ mod tests {
         );
         assert_eq!(
             parse_gateway_ws_slash("  /RESET  "),
+            Some(ParsedRuntimeSlash::NewSession)
+        );
+        assert_eq!(
+            parse_gateway_ws_slash("/fresh-session"),
             Some(ParsedRuntimeSlash::NewSession)
         );
     }

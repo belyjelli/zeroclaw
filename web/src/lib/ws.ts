@@ -2,8 +2,12 @@ import type { WsMessage } from '../types/api';
 import { getToken } from './auth';
 import { apiOrigin, gatewayPublicPrefix } from './basePath';
 import { isWebDevMockActive, getWebDevMockSection } from './devMockConfig';
+import {
+  ensureGatewayChatDocumentSession,
+  getOrCreateGatewayChatSessionId,
+  allocateNewGatewayChatSessionId,
+} from './gatewayChatSession';
 import { isTauri } from './tauri';
-import { generateUUID } from './uuid';
 
 export type WsMessageHandler = (msg: WsMessage) => void;
 export type WsOpenHandler = () => void;
@@ -24,18 +28,6 @@ export interface WebSocketClientOptions {
 const DEFAULT_RECONNECT_DELAY = 1000;
 const MAX_RECONNECT_DELAY = 30000;
 
-const SESSION_STORAGE_KEY = 'zeroclaw_session_id';
-
-/** Return a stable session ID, persisted in sessionStorage across reconnects. */
-function getOrCreateSessionId(): string {
-  let id = sessionStorage.getItem(SESSION_STORAGE_KEY);
-  if (!id) {
-    id = generateUUID();
-    sessionStorage.setItem(SESSION_STORAGE_KEY, id);
-  }
-  return id;
-}
-
 export class WebSocketClient {
   private ws: WebSocket | null = null;
   /** When set, `connect()` skipped the real socket (web dev mock). */
@@ -43,6 +35,10 @@ export class WebSocketClient {
   private currentDelay: number;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private intentionallyClosed = false;
+  /** Next real connection should send `fresh=true` (manual new session or doc prep). */
+  private pendingFreshQuery = false;
+  /** Last successful WebSocket open used `fresh=true` (consumed by `takeFreshConnectFlag`). */
+  private lastConnectHadFreshQuery = false;
 
   public onMessage: WsMessageHandler | null = null;
   public onOpen: WsOpenHandler | null = null;
@@ -57,7 +53,6 @@ export class WebSocketClient {
   constructor(options: WebSocketClientOptions = {}) {
     let defaultBase: string;
     if (isTauri() && apiOrigin) {
-      // In Tauri, derive ws URL from the gateway origin.
       defaultBase = apiOrigin.replace(/^http/, 'ws');
     } else {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -70,13 +65,41 @@ export class WebSocketClient {
     this.currentDelay = this.reconnectDelay;
   }
 
-  /** Open the WebSocket connection. */
+  /** Open the WebSocket connection (async prep runs internally). */
   connect(): void {
+    void this.openSocketConnection();
+  }
+
+  /**
+   * New gateway chat session: new `session_id`, optional `fresh` query on next open,
+   * reconnect without marking the socket intentionally closed.
+   */
+  rotateSessionId(): void {
+    this.intentionallyClosed = false;
+    this.pendingFreshQuery = true;
+    allocateNewGatewayChatSessionId();
+    this.clearReconnectTimer();
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.close();
+    } else {
+      this.devMockOpen = false;
+      void this.openSocketConnection();
+    }
+  }
+
+  private async openSocketConnection(): Promise<void> {
     this.intentionallyClosed = false;
     this.clearReconnectTimer();
 
+    const prep = await ensureGatewayChatDocumentSession();
+    const addFresh = prep.useFreshQuery || this.pendingFreshQuery;
+    if (this.pendingFreshQuery) {
+      this.pendingFreshQuery = false;
+    }
+
     if (isWebDevMockActive()) {
       this.devMockOpen = true;
+      this.lastConnectHadFreshQuery = addFresh;
       queueMicrotask(() => {
         this.onOpen?.();
       });
@@ -86,10 +109,13 @@ export class WebSocketClient {
     this.devMockOpen = false;
 
     const token = getToken();
-    const sessionId = getOrCreateSessionId();
+    const sessionId = getOrCreateGatewayChatSessionId();
     const params = new URLSearchParams();
     if (token) params.set('token', token);
     params.set('session_id', sessionId);
+    if (addFresh) {
+      params.set('fresh', 'true');
+    }
     const url = `${this.baseUrl}${gatewayPublicPrefix}/ws/chat?${params.toString()}`;
 
     const protocols: string[] = ['zeroclaw.v1'];
@@ -98,6 +124,7 @@ export class WebSocketClient {
 
     this.ws.onopen = () => {
       this.currentDelay = this.reconnectDelay;
+      this.lastConnectHadFreshQuery = addFresh;
       this.onOpen?.();
     };
 
@@ -157,6 +184,16 @@ export class WebSocketClient {
     return this.ws?.readyState === WebSocket.OPEN;
   }
 
+  /**
+   * Whether the current (or most recent) connection opened with `fresh=true`.
+   * Call once when handling `session_start` to drive navigation toasts.
+   */
+  takeFreshConnectFlag(): boolean {
+    const v = this.lastConnectHadFreshQuery;
+    this.lastConnectHadFreshQuery = false;
+    return v;
+  }
+
   // ---------------------------------------------------------------------------
   // Reconnection logic
   // ---------------------------------------------------------------------------
@@ -166,7 +203,7 @@ export class WebSocketClient {
 
     this.reconnectTimer = setTimeout(() => {
       this.currentDelay = Math.min(this.currentDelay * 2, this.maxReconnectDelay);
-      this.connect();
+      void this.openSocketConnection();
     }, this.currentDelay);
   }
 

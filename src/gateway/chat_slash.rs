@@ -210,6 +210,7 @@ pub fn slash_command_catalog() -> serde_json::Value {
         "commands": [
             { "name": "/new", "description": "Clear this chat session and start fresh" },
             { "name": "/reset", "description": "Same as /new" },
+            { "name": "/fresh-session", "description": "Same as /new (explicit fresh session)" },
             { "name": "/models", "description": "List providers or /models <provider> to switch" },
             { "name": "/model", "description": "Show models or /model <id> to switch" },
             { "name": "/config", "description": "Show current provider, model, and routes" },

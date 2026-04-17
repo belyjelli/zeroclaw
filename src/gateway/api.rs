@@ -123,6 +123,7 @@ pub async fn handle_api_status(
         "channels": channels,
         "health": health,
         "webui": webui,
+        "web_chat_preserve_session_on_navigation": config.gateway.web_chat_preserve_session_on_navigation,
     });
 
     Json(body).into_response()

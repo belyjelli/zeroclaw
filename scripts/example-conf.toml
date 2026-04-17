@@ -413,6 +413,9 @@ idempotency_ttl_secs = 300
 idempotency_max_keys = 10000
 session_persistence = true
 session_ttl_hours = 0
+# When true, the web dashboard keeps the same gateway chat session id across full page reloads (legacy).
+# Default false: each reload starts a fresh gateway session id client-side.
+web_chat_preserve_session_on_navigation = false
 
 [gateway.pairing_dashboard]
 code_length = 8

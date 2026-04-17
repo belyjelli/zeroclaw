@@ -17,6 +17,8 @@ export interface StatusResponse {
   channels: Record<string, boolean>;
   health: HealthSnapshot;
   webui?: WebUiStatusSnapshot;
+  /** When true, web chat keeps the same gateway session id across full page reloads. */
+  web_chat_preserve_session_on_navigation?: boolean;
 }
 
 export interface HealthSnapshot {
@@ -121,7 +123,16 @@ export interface SSEEvent {
 }
 
 export interface WsMessage {
-  type: 'message' | 'chunk' | 'chunk_reset' | 'tool_call' | 'tool_result' | 'done' | 'error';
+  type:
+    | 'message'
+    | 'chunk'
+    | 'chunk_reset'
+    | 'tool_call'
+    | 'tool_result'
+    | 'done'
+    | 'error'
+    | 'session_start'
+    | 'connected';
   content?: string;
   full_response?: string;
   name?: string;
@@ -129,4 +140,7 @@ export interface WsMessage {
   output?: string;
   message?: string;
   code?: string;
+  session_id?: string;
+  resumed?: boolean;
+  message_count?: number;
 }

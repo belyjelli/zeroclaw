@@ -68,8 +68,14 @@ const translations: Record<Locale, Record<string, string>> = {
     'agent.connected_status': '已连接',
     'agent.disconnected_status': '已断开',
     'agent.slash_hint':
-      '斜杠命令：/new 或 /reset 清空会话 · /models 列出或切换提供商 · /model 查看或切换模型 · /config 当前路由',
+      '斜杠命令：/new、/reset、/fresh-session 清空会话 · /models 列出或切换提供商 · /model 查看或切换模型 · /config 当前路由',
     'agent.slash_suggestions_aria': '斜杠命令建议',
+    'agent.session_fresh_nav_toast': '页面刷新后已开启全新会话',
+    'agent.session_status_fresh': '会话：全新',
+    'agent.session_status_resumed': '会话：已恢复',
+    'agent.session_cleared_in_chat': '会话已清空 — 正在重新连接…',
+    'agent.new_session_button': '新会话',
+    'agent.new_session_aria': '开始新的网关聊天会话',
 
     // Tools
     'tools.title': '可用工具',
@@ -562,8 +568,14 @@ const translations: Record<Locale, Record<string, string>> = {
     'agent.connected_status': 'Connected',
     'agent.disconnected_status': 'Disconnected',
     'agent.slash_hint':
-      'Slash: /new or /reset clear session · /models list or switch provider · /model show or set model · /config current route',
+      'Slash: /new, /reset, /fresh-session clear session · /models list or switch provider · /model show or set model · /config current route',
     'agent.slash_suggestions_aria': 'Slash command suggestions',
+    'agent.session_fresh_nav_toast': 'Started a fresh session after page refresh',
+    'agent.session_status_fresh': 'Session: fresh',
+    'agent.session_status_resumed': 'Session: resumed',
+    'agent.session_cleared_in_chat': 'Session cleared — reconnecting…',
+    'agent.new_session_button': 'New session',
+    'agent.new_session_aria': 'Start a new gateway chat session',
 
     // Tools
     'tools.title': 'Available Tools',
@@ -1078,8 +1090,14 @@ const translations: Record<Locale, Record<string, string>> = {
     'agent.connected_status': 'Bağlandı',
     'agent.disconnected_status': 'Bağlantı kesildi',
     'agent.slash_hint':
-      'Komutlar: /new veya /reset oturumu temizler · /models sağlayıcı · /model model · /config rota',
+      'Komutlar: /new, /reset, /fresh-session oturumu temizler · /models sağlayıcı · /model model · /config rota',
     'agent.slash_suggestions_aria': 'Eğik çizgi komut önerileri',
+    'agent.session_fresh_nav_toast': 'Sayfa yenilendikten sonra yeni oturum başlatıldı',
+    'agent.session_status_fresh': 'Oturum: yeni',
+    'agent.session_status_resumed': 'Oturum: devam',
+    'agent.session_cleared_in_chat': 'Oturum temizlendi — yeniden bağlanılıyor…',
+    'agent.new_session_button': 'Yeni oturum',
+    'agent.new_session_aria': 'Yeni ağ geçidi sohbet oturumu başlat',
 
     // Tools
     'tools.title': 'Mevcut Araçlar',

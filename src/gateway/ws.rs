@@ -17,6 +17,8 @@
 //! - `session_id` — resume or create a session (default: new UUID)
 //! - `name` — optional human-readable label for the session
 //! - `token` — bearer auth token (alternative to Authorization header)
+//! - `fresh` — when `true` / `1` / `yes` (case-insensitive), clear persisted gateway history and
+//!   any stored route override for this `session_id` before hydrating the agent
 
 use super::AppState;
 use axum::{
@@ -64,6 +66,18 @@ pub struct WsQuery {
     pub session_id: Option<String>,
     /// Optional human-readable name for the session.
     pub name: Option<String>,
+    /// Fresh navigation / explicit reset (`true`, `1`, `yes`, case-insensitive).
+    #[serde(default)]
+    pub fresh: Option<String>,
+}
+
+fn parse_ws_fresh_query(raw: Option<&str>) -> bool {
+    let Some(s) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return false;
+    };
+    s.eq_ignore_ascii_case("1")
+        || s.eq_ignore_ascii_case("true")
+        || s.eq_ignore_ascii_case("yes")
 }
 
 /// Extract a bearer token from WebSocket-compatible sources.
@@ -146,7 +160,8 @@ pub async fn handle_ws_chat(
 
     let session_id = params.session_id;
     let session_name = params.name;
-    ws.on_upgrade(move |socket| handle_socket(socket, state, session_id, session_name))
+    let nav_fresh = parse_ws_fresh_query(params.fresh.as_deref());
+    ws.on_upgrade(move |socket| handle_socket(socket, state, session_id, session_name, nav_fresh))
         .into_response()
 }
 
@@ -284,11 +299,27 @@ async fn handle_socket(
     state: AppState,
     session_id: Option<String>,
     session_name: Option<String>,
+    nav_fresh: bool,
 ) {
     let (mut sender, mut receiver) = socket.split();
 
     // Resolve session ID: use provided or generate a new UUID
     let mut session_id = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+    if nav_fresh {
+        let session_key_preview = crate::agent::session_record::gateway_backend_key(&session_id);
+        state
+            .gateway_chat_routes
+            .lock()
+            .remove(&session_key_preview);
+        if let Some(ref backend) = state.session_backend {
+            let _ = backend.delete_session(&session_key_preview);
+        }
+        tracing::info!(
+            session_id = %session_id,
+            "gateway ws chat: fresh query honored; cleared persisted session and route overrides"
+        );
+    }
 
     // Build a persistent Agent for this connection so history is maintained across turns.
     let config = state.config.lock().clone();
@@ -729,9 +760,25 @@ mod tests {
             Some(ParsedRuntimeSlash::NewSession)
         );
         assert_eq!(
+            parse_gateway_ws_slash("/fresh-session"),
+            Some(ParsedRuntimeSlash::NewSession)
+        );
+        assert_eq!(
             parse_gateway_ws_slash("/models"),
             Some(ParsedRuntimeSlash::ShowProviders)
         );
+    }
+
+    #[test]
+    fn parse_ws_fresh_query_accepts_common_truthy_strings() {
+        assert!(parse_ws_fresh_query(Some("1")));
+        assert!(parse_ws_fresh_query(Some("true")));
+        assert!(parse_ws_fresh_query(Some("TRUE")));
+        assert!(parse_ws_fresh_query(Some("yes")));
+        assert!(!parse_ws_fresh_query(None));
+        assert!(!parse_ws_fresh_query(Some("")));
+        assert!(!parse_ws_fresh_query(Some("0")));
+        assert!(!parse_ws_fresh_query(Some("false")));
     }
 
     #[test]
